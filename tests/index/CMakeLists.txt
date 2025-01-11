@@ -7,8 +7,8 @@ add_executable(
 target_link_libraries(
   insert_test
   type_lib
-
-  spdlog::spdlog
+  index_lib
+  spdlog
   GTest::gtest_main
 )
 include(GoogleTest)

@@ -52,3 +52,20 @@ target_link_libraries(
   base_lib
 )
 
+aux_source_directory(index INDEX_SRC)
+add_library(
+  index_lib
+  STATIC
+  ${INDEX_SRC}
+)
+target_include_directories(
+  index_lib
+  PUBLIC
+  index
+  ${CMAKE_SOURCE_DIR}
+)
+target_link_libraries(
+  index_lib
+  type_lib
+  spdlog
+)

@@ -3,7 +3,6 @@
 
 #include <cstdint>
 #include <format>
-#include <memory>
 #include <string>
 #include "src/base/macro.h"
 
@@ -34,9 +33,7 @@ const char * type_to_string(ValueType type);
 class Value
 {
 public:
-    Value() {
-        type_ = ValueType::Null;
-    }
+    Value() { type_ = ValueType::Null; }
 
     static bool is_type_equal(const Value & a, const Value & b) { return a.type_ == b.type_; }
     /**
@@ -53,12 +50,9 @@ public:
 
     explicit Value(const ValueType new_type) : type_(new_type) { }
 
-    explicit Value(const ValueType new_type, const std::string & arg) : type_(new_type)
+    explicit Value(const ValueType type, const std::string & arg) : type_(type)
     {
-        ASSERT(
-            (new_type == ValueType::Char || new_type == ValueType::String),
-            "expected type: String or Char, but:{}",
-            type_to_string(new_type));
+        ASSERT((type == ValueType::Char || type == ValueType::String), "expected type: String or Char, but:{}", type_to_string(type));
         value_.str_val_ = new std::string(arg);
     }
     explicit Value(const ValueType new_type, const char * arg) : type_(new_type)
@@ -195,9 +189,9 @@ public:
             case ValueType::String:
                 return lhs.string_ref() < rhs.string_ref();
             default:
-                ASSERT(false, "Unsupported type for comparison");
+                PANIC("Unsupported type for comparison");
+                return false;
         }
-        return false;
     }
 
     friend bool operator==(const Value & lhs, const Value & rhs)
@@ -232,6 +226,43 @@ public:
                 return lhs.u8() == rhs.u8();
             case ValueType::String:
                 return lhs.string_ref() == rhs.string_ref();
+            default:
+                ASSERT(false, "Unsupported type for comparison");
+        }
+        return false;
+    }
+
+    friend bool operator>=(const Value & lhs, const Value & rhs)
+    {
+        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
+        switch (lhs.type_)
+        {
+            case ValueType::Uint8:
+                return lhs.u8() >= rhs.u8();
+            case ValueType::Uint16:
+                return lhs.u16() >= rhs.u16();
+            case ValueType::Uint32:
+                return lhs.u32() >= rhs.u32();
+            case ValueType::Uint64:
+                return lhs.u64() >= rhs.u64();
+            case ValueType::Int8:
+                return lhs.i8() >= rhs.i8();
+            case ValueType::Int16:
+                return lhs.i16() >= rhs.i16();
+            case ValueType::Int32:
+                return lhs.i32() >= rhs.i32();
+            case ValueType::Int64:
+                return lhs.i64() >= rhs.i64();
+            case ValueType::Float32:
+                return lhs.f32() >= rhs.f32();
+            case ValueType::Float64:
+                return lhs.f64() >= rhs.f64();
+            case ValueType::Bool:
+                return lhs.boolean() >= rhs.boolean();
+            case ValueType::Char:
+                return lhs.u8() >= rhs.u8();
+            case ValueType::String:
+                return lhs.string_ref() >= rhs.string_ref();
             default:
                 ASSERT(false, "Unsupported type for comparison");
         }
@@ -443,6 +474,11 @@ public:
         return *this;
     }
 
+    friend std::ostream & operator<<(std::ostream & os, const Value & value)
+    {
+        os << value.to_string();
+        return os;
+    }
 
 private:
     ValueType type_;

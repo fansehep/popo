@@ -27,7 +27,7 @@
     } while (0) \
 
 
-static std::string SYS_ERR() {
+static std::string SystemCallErr() {
     return std::format("[{}:{}]", errno, strerror(errno));
 }
 

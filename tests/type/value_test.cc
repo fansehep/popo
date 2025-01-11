@@ -1,5 +1,5 @@
 #include <format>
-#include <spdlog/spdlog.h>
+#include "spdlog/spdlog.h"
 #include "src/type/value.h"
 
 using namespace neon::type;
@@ -15,7 +15,7 @@ int main()
         SPDLOG_INFO("value len:{}", sizeof(Value));
     }
     {
-        std::array<int, 3> arr;
+        std::array<int, 3> arr{};
         SPDLOG_INFO("{}", arr.size());
     }
 }

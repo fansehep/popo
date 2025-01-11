@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <vector>
 #include "src/type/value.h"
+#include <memory>
 
 
 namespace neon::type
@@ -32,10 +33,12 @@ struct Row
 
     auto append_value(const neon::type::Value & value) -> void { values_.push_back(value); }
 
-    
-
     std::vector<neon::type::Value> values_;
+
+    Row() = default;
 };
+
+using RowRef = std::shared_ptr<Row>;
 
 
 }

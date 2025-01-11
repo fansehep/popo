@@ -9,26 +9,22 @@ add_compile_options(-g "-O0")
 include(FetchContent)
 FetchContent_Declare(
         cpptrace
-        GIT_REPOSITORY https://github.com/jeremy-rifkin/cpptrace.git
-        GIT_TAG        v0.7.3 # <HASH or TAG>
+        URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.5.tar.gz
 )
 FetchContent_MakeAvailable(cpptrace)
 
 FetchContent_Declare(
         spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG        master
+        URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.0.tar.gz
 )
+FetchContent_MakeAvailable(spdlog)
 
 FetchContent_Declare(
         googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG        release-1.12.1
+        URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
 )
 FetchContent_MakeAvailable(googletest)
 
-
-find_package(spdlog REQUIRED)
 
 add_subdirectory(src)
 add_subdirectory(tests)

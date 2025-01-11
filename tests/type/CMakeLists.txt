@@ -7,5 +7,5 @@ target_link_libraries(
   value_test
   type_lib
   asan
-  spdlog::spdlog
+  spdlog
 )

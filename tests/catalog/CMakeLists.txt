@@ -1,0 +1,2 @@
+add_executable(schema_test schema_test.cc)
+target_link_libraries(schema_test PRIVATE catalog_lib type_lib base_lib gtest gtest_main)

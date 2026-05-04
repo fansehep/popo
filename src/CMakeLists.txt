@@ -52,20 +52,86 @@ target_link_libraries(
   base_lib
 )
 
-aux_source_directory(index INDEX_SRC)
+# Index library - now only includes header files
 add_library(
   index_lib
-  STATIC
-  ${INDEX_SRC}
+  INTERFACE
 )
 target_include_directories(
   index_lib
-  PUBLIC
+  INTERFACE
   index
   ${CMAKE_SOURCE_DIR}
 )
 target_link_libraries(
   index_lib
+  INTERFACE
   type_lib
   spdlog
 )
+
+aux_source_directory(expression EXPRESSION_SRC)
+add_library(
+  expression_lib
+  STATIC
+  ${EXPRESSION_SRC}
+)
+target_include_directories(
+  expression_lib
+  PUBLIC
+  expression
+  ${CMAKE_SOURCE_DIR}
+)
+target_link_libraries(
+  expression_lib
+  type_lib
+  base_lib
+)
+
+add_library(parser_lib
+    parser/lexer.cc
+    parser/parser.cc
+)
+target_link_libraries(parser_lib PUBLIC base_lib type_lib)
+target_include_directories(parser_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+add_library(planner_lib
+    planner/planner.cc
+)
+target_link_libraries(planner_lib PUBLIC base_lib type_lib catalog_lib parser_lib)
+target_include_directories(planner_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+add_library(bytecode_lib
+    bytecode/program.cc
+    bytecode/compiler.cc
+    bytecode/vm.cc
+)
+target_link_libraries(bytecode_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib storage_lib)
+target_include_directories(bytecode_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+# Storage library (includes transaction manager)
+add_library(storage_lib
+    storage/disk_manager.cc
+    storage/row_serializer.cc
+    storage/lru_replacer.cc
+    storage/buffer_pool.cc
+    storage/redo_log.cc
+    storage/table_heap.cc
+    storage/storage_engine.cc
+    trancation/manager.cc
+)
+target_include_directories(storage_lib PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog)
+
+# Add server library
+add_library(server_lib
+    server/protocol.cc
+    server/session.cc
+    server/server.cc
+)
+target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib storage_lib asio_lib spdlog)
+target_include_directories(server_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+# Add neon-server executable
+add_executable(neon-server server/main.cc)
+target_link_libraries(neon-server PRIVATE server_lib)

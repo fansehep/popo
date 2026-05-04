@@ -1,0 +1,2 @@
+add_executable(expression_test expression_test.cc)
+target_link_libraries(expression_test PRIVATE expression_lib type_lib base_lib gtest gtest_main)

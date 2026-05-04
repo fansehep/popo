@@ -1,7 +1,7 @@
 #include "src/type/value.h"
 
-
-namespace neon::type {
+namespace neon::type
+{
 
 const char * type_to_string(ValueType type)
 {
@@ -40,18 +40,18 @@ const char * type_to_string(ValueType type)
     }
 }
 
-
-bool Value::is_numeric() noexcept
+bool Value::is_numeric() const noexcept
 {
-    switch (this->type_) {
-        case ValueType::Int8:
-        case ValueType::Int16:
-        case ValueType::Int32:
-        case ValueType::Int64:
+    switch (type_)
+    {
         case ValueType::Uint8:
         case ValueType::Uint16:
         case ValueType::Uint32:
         case ValueType::Uint64:
+        case ValueType::Int8:
+        case ValueType::Int16:
+        case ValueType::Int32:
+        case ValueType::Int64:
         case ValueType::Float32:
         case ValueType::Float64:
             return true;
@@ -60,5 +60,4 @@ bool Value::is_numeric() noexcept
     }
 }
 
-}
-
+} // namespace neon::type

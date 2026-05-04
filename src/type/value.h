@@ -34,13 +34,46 @@ class Value
 {
 public:
     Value() { type_ = ValueType::Null; }
+    
+    // 拷贝构造函数
+    Value(const Value& other) : type_(other.type_) {
+        switch (type_) {
+            case ValueType::String:
+                value_.str_val_ = new std::string(*other.value_.str_val_);
+                break;
+            default:
+                value_ = other.value_;
+                break;
+        }
+    }
+    
+    // 赋值操作符
+    Value& operator=(const Value& other) {
+        if (this != &other) {
+            // 先清理当前资源
+            if (type_ == ValueType::String) {
+                delete value_.str_val_;
+            }
+            
+            type_ = other.type_;
+            switch (type_) {
+                case ValueType::String:
+                    value_.str_val_ = new std::string(*other.value_.str_val_);
+                    break;
+                default:
+                    value_ = other.value_;
+                    break;
+            }
+        }
+        return *this;
+    }
 
     static bool is_type_equal(const Value & a, const Value & b) { return a.type_ == b.type_; }
     /**
      * @brief 判断Value是否是数值类型
      * @return
      */
-    bool is_numeric() noexcept;
+    bool is_numeric() const noexcept;
 
     [[nodiscard]] ValueType datatype() const { return type_; }
 
@@ -194,81 +227,6 @@ public:
         }
     }
 
-    friend bool operator==(const Value & lhs, const Value & rhs)
-    {
-        if (lhs.type_ != rhs.type_)
-            return false;
-        switch (lhs.type_)
-        {
-            case ValueType::Uint8:
-                return lhs.u8() == rhs.u8();
-            case ValueType::Uint16:
-                return lhs.u16() == rhs.u16();
-            case ValueType::Uint32:
-                return lhs.u32() == rhs.u32();
-            case ValueType::Uint64:
-                return lhs.u64() == rhs.u64();
-            case ValueType::Int8:
-                return lhs.i8() == rhs.i8();
-            case ValueType::Int16:
-                return lhs.i16() == rhs.i16();
-            case ValueType::Int32:
-                return lhs.i32() == rhs.i32();
-            case ValueType::Int64:
-                return lhs.i64() == rhs.i64();
-            case ValueType::Float32:
-                return lhs.f32() == rhs.f32();
-            case ValueType::Float64:
-                return lhs.f64() == rhs.f64();
-            case ValueType::Bool:
-                return lhs.boolean() == rhs.boolean();
-            case ValueType::Char:
-                return lhs.u8() == rhs.u8();
-            case ValueType::String:
-                return lhs.string_ref() == rhs.string_ref();
-            default:
-                ASSERT(false, "Unsupported type for comparison");
-        }
-        return false;
-    }
-
-    friend bool operator>=(const Value & lhs, const Value & rhs)
-    {
-        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
-        switch (lhs.type_)
-        {
-            case ValueType::Uint8:
-                return lhs.u8() >= rhs.u8();
-            case ValueType::Uint16:
-                return lhs.u16() >= rhs.u16();
-            case ValueType::Uint32:
-                return lhs.u32() >= rhs.u32();
-            case ValueType::Uint64:
-                return lhs.u64() >= rhs.u64();
-            case ValueType::Int8:
-                return lhs.i8() >= rhs.i8();
-            case ValueType::Int16:
-                return lhs.i16() >= rhs.i16();
-            case ValueType::Int32:
-                return lhs.i32() >= rhs.i32();
-            case ValueType::Int64:
-                return lhs.i64() >= rhs.i64();
-            case ValueType::Float32:
-                return lhs.f32() >= rhs.f32();
-            case ValueType::Float64:
-                return lhs.f64() >= rhs.f64();
-            case ValueType::Bool:
-                return lhs.boolean() >= rhs.boolean();
-            case ValueType::Char:
-                return lhs.u8() >= rhs.u8();
-            case ValueType::String:
-                return lhs.string_ref() >= rhs.string_ref();
-            default:
-                ASSERT(false, "Unsupported type for comparison");
-        }
-        return false;
-    }
-
     friend bool operator>(const Value & lhs, const Value & rhs)
     {
         ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
@@ -301,43 +259,45 @@ public:
             case ValueType::String:
                 return lhs.string_ref() > rhs.string_ref();
             default:
-                ASSERT(false, "Unsupported type for comparison");
+                PANIC("Unsupported type for comparison");
+                return false;
         }
-        return false;
     }
 
-    [[nodiscard]] std::string to_string() const
+    friend bool operator==(const Value & lhs, const Value & rhs)
     {
-        switch (type_)
+        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
+        switch (lhs.type_)
         {
             case ValueType::Uint8:
-                return std::format("[Uint8, {}]", u8());
+                return lhs.u8() == rhs.u8();
             case ValueType::Uint16:
-                return std::format("[Uint16, {}]", u16());
+                return lhs.u16() == rhs.u16();
             case ValueType::Uint32:
-                return std::format("[Uint32, {}]", u32());
+                return lhs.u32() == rhs.u32();
             case ValueType::Uint64:
-                return std::format("[Uint64, {}]", u64());
+                return lhs.u64() == rhs.u64();
             case ValueType::Int8:
-                return std::format("[Int8, {}]", i8());
+                return lhs.i8() == rhs.i8();
             case ValueType::Int16:
-                return std::format("[Int16, {}]", i16());
+                return lhs.i16() == rhs.i16();
             case ValueType::Int32:
-                return std::format("[Int32, {}]", i32());
+                return lhs.i32() == rhs.i32();
             case ValueType::Int64:
-                return std::format("[Int64, {}]", i64());
+                return lhs.i64() == rhs.i64();
             case ValueType::Float32:
-                return std::format("[Float32, {}]", f32());
+                return lhs.f32() == rhs.f32();
             case ValueType::Float64:
-                return std::format("[Float64, {}]", f64());
+                return lhs.f64() == rhs.f64();
             case ValueType::Bool:
-                return std::format("[Bool, {}]", boolean());
+                return lhs.boolean() == rhs.boolean();
             case ValueType::Char:
-                return std::format("[Char, {}]", static_cast<char>(u8()));
+                return lhs.u8() == rhs.u8();
             case ValueType::String:
-                return std::format("[String, {}]", string_ref());
+                return lhs.string_ref() == rhs.string_ref();
             default:
-                return "[Unknown Type]";
+                PANIC("Unsupported type for comparison");
+                return false;
         }
     }
 
@@ -346,145 +306,40 @@ public:
         switch (type_)
         {
             case ValueType::Uint8:
-                return std::format("{}", u8());
+                return std::to_string(u8());
             case ValueType::Uint16:
-                return std::format("{}", u16());
+                return std::to_string(u16());
             case ValueType::Uint32:
-                return std::format("{}", u32());
+                return std::to_string(u32());
             case ValueType::Uint64:
-                return std::format("{}", u64());
+                return std::to_string(u64());
             case ValueType::Int8:
-                return std::format("{}", i8());
+                return std::to_string(i8());
             case ValueType::Int16:
-                return std::format("{}", i16());
+                return std::to_string(i16());
             case ValueType::Int32:
-                return std::format("{}", i32());
+                return std::to_string(i32());
             case ValueType::Int64:
-                return std::format("{}", i64());
+                return std::to_string(i64());
             case ValueType::Float32:
-                return std::format("{}", f32());
+                return std::to_string(f32());
             case ValueType::Float64:
-                return std::format("{}", f64());
+                return std::to_string(f64());
             case ValueType::Bool:
-                return std::format("{}", boolean());
+                return boolean() ? "true" : "false";
             case ValueType::Char:
-                return std::format("{}", static_cast<char>(u8()));
+                return std::string(1, static_cast<char>(u8()));
             case ValueType::String:
-                return std::format("{}", string_ref());
+                return string_ref();
             default:
-                return "[Unknown Type]";
+                return "null";
         }
-    }
-
-    Value(const Value & other) : type_(other.type_)
-    {
-        switch (type_)
-        {
-            case ValueType::Uint8:
-                value_.u8_val_ = other.value_.u8_val_;
-                break;
-            case ValueType::Uint16:
-                value_.u16_val_ = other.value_.u16_val_;
-                break;
-            case ValueType::Uint32:
-                value_.u32_val_ = other.value_.u32_val_;
-                break;
-            case ValueType::Uint64:
-                value_.u64_val_ = other.value_.u64_val_;
-                break;
-            case ValueType::Int8:
-                value_.i8_val_ = other.value_.i8_val_;
-                break;
-            case ValueType::Int16:
-                value_.i16_val_ = other.value_.i16_val_;
-                break;
-            case ValueType::Int32:
-                value_.i32_val_ = other.value_.i32_val_;
-                break;
-            case ValueType::Int64:
-                value_.i64_val_ = other.value_.i64_val_;
-                break;
-            case ValueType::Float32:
-                value_.f32_val_ = other.value_.f32_val_;
-                break;
-            case ValueType::Float64:
-                value_.f64_val_ = other.value_.f64_val_;
-                break;
-            case ValueType::Bool:
-                value_.bool_val_ = other.value_.bool_val_;
-                break;
-            case ValueType::Char:
-                value_.u8_val_ = other.value_.u8_val_;
-                break;
-            case ValueType::String:
-                value_.str_val_ = new std::string(*other.value_.str_val_);
-                break;
-            default:
-                ASSERT(false, "Unsupported type for copy construction");
-        }
-    }
-
-    Value & operator=(const Value & other)
-    {
-        type_ = other.type_;
-        switch (type_)
-        {
-            case ValueType::Uint8:
-                value_.u8_val_ = other.value_.u8_val_;
-                break;
-            case ValueType::Uint16:
-                value_.u16_val_ = other.value_.u16_val_;
-                break;
-            case ValueType::Uint32:
-                value_.u32_val_ = other.value_.u32_val_;
-                break;
-            case ValueType::Uint64:
-                value_.u64_val_ = other.value_.u64_val_;
-                break;
-            case ValueType::Int8:
-                value_.i8_val_ = other.value_.i8_val_;
-                break;
-            case ValueType::Int16:
-                value_.i16_val_ = other.value_.i16_val_;
-                break;
-            case ValueType::Int32:
-                value_.i32_val_ = other.value_.i32_val_;
-                break;
-            case ValueType::Int64:
-                value_.i64_val_ = other.value_.i64_val_;
-                break;
-            case ValueType::Float32:
-                value_.f32_val_ = other.value_.f32_val_;
-                break;
-            case ValueType::Float64:
-                value_.f64_val_ = other.value_.f64_val_;
-                break;
-            case ValueType::Bool:
-                value_.bool_val_ = other.value_.bool_val_;
-                break;
-            case ValueType::Char:
-                value_.u8_val_ = other.value_.u8_val_;
-                break;
-            case ValueType::String:
-                value_.str_val_ = new std::string(*other.value_.str_val_);
-                break;
-            default:
-                ASSERT(false, "Unsupported type for assignment");
-        }
-        return *this;
-    }
-
-    friend std::ostream & operator<<(std::ostream & os, const Value & value)
-    {
-        os << value.to_string();
-        return os;
     }
 
 private:
-    ValueType type_;
-    union Storage
+    union Val
     {
-        uint8_t u8_val_{};
+        uint8_t u8_val_;
         uint16_t u16_val_;
         uint32_t u32_val_;
         uint64_t u64_val_;
@@ -492,14 +347,24 @@ private:
         int16_t i16_val_;
         int32_t i32_val_;
         int64_t i64_val_;
+        bool bool_val_;
         float f32_val_;
         double f64_val_;
-        bool bool_val_;
         std::string * str_val_;
+    };
 
-        Storage() { }
-        ~Storage() { }
-    } value_;
+    ValueType type_{ValueType::Null};
+    Val value_{};
 };
 
-}
+} // namespace neon::type
+
+template <>
+struct std::formatter<neon::type::Value> : std::formatter<std::string>
+{
+    template <typename FormatContext>
+    auto format(const neon::type::Value & val, FormatContext & ctx) const
+    {
+        return std::formatter<std::string>::format(val.to_val_string(), ctx);
+    }
+};

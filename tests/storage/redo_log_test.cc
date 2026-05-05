@@ -1,31 +1,30 @@
-#include <gtest/gtest.h>
-#include "src/storage/redo_log.h"
-#include "src/storage/common.h"
 #include <filesystem>
 #include <random>
+#include <gtest/gtest.h>
+#include "src/storage/common.h"
+#include "src/storage/redo_log.h"
 
 using namespace neon::storage;
 namespace fs = std::filesystem;
 
-class RedoLogTest : public ::testing::Test {
+class RedoLogTest : public ::testing::Test
+{
 protected:
     std::string test_dir;
     std::string log_path;
 
-    void SetUp() override {
+    void SetUp() override
+    {
         std::random_device rd;
         test_dir = fs::temp_directory_path().string() + "/neon_rl_test_" + std::to_string(rd());
         fs::create_directories(test_dir);
         log_path = test_dir + "/redo.log";
     }
 
-    void TearDown() override {
-        fs::remove_all(test_dir);
-    }
+    void TearDown() override { fs::remove_all(test_dir); }
 
-    LogRecord make_insert_record(txn_id_t txn_id, const std::string& table,
-                                  page_id_t pid, slot_id_t sid,
-                                  const std::string& data) {
+    LogRecord make_insert_record(txn_id_t txn_id, const std::string & table, page_id_t pid, slot_id_t sid, const std::string & data)
+    {
         LogRecord rec;
         rec.txn_id = txn_id;
         rec.type = LogType::INSERT;
@@ -37,7 +36,8 @@ protected:
     }
 };
 
-TEST_F(RedoLogTest, AppendAndFlush) {
+TEST_F(RedoLogTest, AppendAndFlush)
+{
     RedoLogManager mgr(log_path);
     EXPECT_EQ(mgr.flushed_lsn(), 0u);
 
@@ -49,7 +49,8 @@ TEST_F(RedoLogTest, AppendAndFlush) {
     EXPECT_GE(mgr.flushed_lsn(), lsn2);
 }
 
-TEST_F(RedoLogTest, ReadAllRecords) {
+TEST_F(RedoLogTest, ReadAllRecords)
+{
     {
         RedoLogManager mgr(log_path);
         mgr.append(make_insert_record(1, "t1", 1, 0, "record_a"));
@@ -69,7 +70,8 @@ TEST_F(RedoLogTest, ReadAllRecords) {
     EXPECT_EQ(std::string(records[2].new_data.begin(), records[2].new_data.end()), "record_c");
 }
 
-TEST_F(RedoLogTest, RecoveryLSN) {
+TEST_F(RedoLogTest, RecoveryLSN)
+{
     lsn_t last_lsn;
     {
         RedoLogManager mgr(log_path);
@@ -85,7 +87,8 @@ TEST_F(RedoLogTest, RecoveryLSN) {
     EXPECT_GE(new_lsn, last_lsn);
 }
 
-TEST_F(RedoLogTest, Truncate) {
+TEST_F(RedoLogTest, Truncate)
+{
     RedoLogManager mgr(log_path);
     mgr.append(make_insert_record(1, "t1", 1, 0, "data1"));
     mgr.append(make_insert_record(1, "t1", 1, 1, "data2"));

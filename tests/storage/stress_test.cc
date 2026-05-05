@@ -1,29 +1,31 @@
-#include <gtest/gtest.h>
-#include "src/storage/table_heap.h"
-#include "src/storage/buffer_pool.h"
-#include "src/storage/disk_manager.h"
-#include "src/storage/redo_log.h"
-#include "src/storage/common.h"
-#include "src/catalog/schema.h"
-#include "src/catalog/column.h"
-#include "src/type/value.h"
-#include "src/type/tuple.h"
-#include "src/trancation/txn.h"
-#include <filesystem>
-#include <random>
-#include <set>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <limits>
+#include <random>
+#include <set>
+#include <gtest/gtest.h>
+#include "src/catalog/column.h"
+#include "src/catalog/schema.h"
+#include "src/storage/buffer_pool.h"
+#include "src/storage/common.h"
+#include "src/storage/disk_manager.h"
+#include "src/storage/redo_log.h"
+#include "src/storage/table_heap.h"
+#include "src/trancation/txn.h"
+#include "src/type/tuple.h"
+#include "src/type/value.h"
 
 using namespace neon::storage;
 using namespace neon::type;
 using namespace neon::catalog;
 namespace fs = std::filesystem;
 
-namespace {
+namespace
+{
 
-Schema make_schema(const std::string& name) {
+Schema make_schema(const std::string & name)
+{
     Schema schema;
     schema.id_ = 1;
     schema.table_name_ = name;
@@ -50,7 +52,8 @@ Schema make_schema(const std::string& name) {
     return schema;
 }
 
-Row make_row(int32_t id, const std::string& payload) {
+Row make_row(int32_t id, const std::string & payload)
+{
     Row row;
     row.append_value(Value(ValueType::Int32, id));
     row.append_value(Value(ValueType::String, payload));
@@ -59,7 +62,8 @@ Row make_row(int32_t id, const std::string& payload) {
 
 } // anonymous namespace
 
-class StressTest : public ::testing::Test {
+class StressTest : public ::testing::Test
+{
 protected:
     std::string test_dir;
     std::unique_ptr<DiskManager> dm;
@@ -68,10 +72,10 @@ protected:
     std::unique_ptr<TableHeap> heap;
     Schema schema;
 
-    void SetUp() override {
+    void SetUp() override
+    {
         std::random_device rd;
-        test_dir = fs::temp_directory_path().string()
-                   + "/neon_stress_" + std::to_string(rd());
+        test_dir = fs::temp_directory_path().string() + "/neon_stress_" + std::to_string(rd());
         fs::create_directories(test_dir);
 
         dm = std::make_unique<DiskManager>(test_dir);
@@ -82,7 +86,8 @@ protected:
         heap = std::make_unique<TableHeap>("stress_table", bpm.get(), redo.get(), schema);
     }
 
-    void TearDown() override {
+    void TearDown() override
+    {
         heap.reset();
         redo.reset();
         bpm.reset();
@@ -92,13 +97,15 @@ protected:
 };
 
 // Verify that a full scan returns rows in PK order with no duplicates
-void verify_bplustree_order(TableHeap* heap, int expected_min_count = 0) {
+void verify_bplustree_order(TableHeap * heap, int expected_min_count = 0)
+{
     auto it = heap->iter();
     it.rewind();
     int count = 0;
     int prev_id = -1;
     std::set<int> seen;
-    while (it.valid()) {
+    while (it.valid())
+    {
         auto row = it.current_row();
         ASSERT_GE(row.len(), 1u);
         int id = row.values_[0].i32();
@@ -111,11 +118,13 @@ void verify_bplustree_order(TableHeap* heap, int expected_min_count = 0) {
     EXPECT_GE(count, expected_min_count);
 }
 
-TEST_F(StressTest, SequentialInsert5000) {
+TEST_F(StressTest, SequentialInsert5000)
+{
     neon::txn::Transaction txn(1);
 
     constexpr int N = 5000;
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         std::string payload = "seq_data_" + std::to_string(i);
         auto rid = heap->insert_row(&txn, make_row(i, payload));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
@@ -126,14 +135,17 @@ TEST_F(StressTest, SequentialInsert5000) {
     // Spot-check random rows
     std::mt19937 g(42);
     std::uniform_int_distribution<int> dist(0, N - 1);
-    for (int i = 0; i < 200; ++i) {
+    for (int i = 0; i < 200; ++i)
+    {
         int target = dist(g);
         auto it = heap->iter();
         it.rewind();
         bool found = false;
-        while (it.valid()) {
+        while (it.valid())
+        {
             auto row = it.current_row();
-            if (row.values_[0].i32() == target) {
+            if (row.values_[0].i32() == target)
+            {
                 found = true;
                 break;
             }
@@ -143,11 +155,13 @@ TEST_F(StressTest, SequentialInsert5000) {
     }
 }
 
-TEST_F(StressTest, ReverseOrderInsert) {
+TEST_F(StressTest, ReverseOrderInsert)
+{
     neon::txn::Transaction txn(1);
 
     constexpr int N = 1000;
-    for (int i = N - 1; i >= 0; --i) {
+    for (int i = N - 1; i >= 0; --i)
+    {
         std::string payload = "rev_" + std::to_string(i);
         auto rid = heap->insert_row(&txn, make_row(i, payload));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
@@ -156,22 +170,26 @@ TEST_F(StressTest, ReverseOrderInsert) {
     verify_bplustree_order(heap.get(), N);
 }
 
-TEST_F(StressTest, RandomInsertLargePayload) {
+TEST_F(StressTest, RandomInsertLargePayload)
+{
     neon::txn::Transaction txn(1);
 
     // Random order insert with medium payloads — stresses split propagation
     constexpr int N = 300;
     std::vector<int> ids(N);
-    for (int i = 0; i < N; ++i) ids[i] = i;
+    for (int i = 0; i < N; ++i)
+        ids[i] = i;
     std::mt19937 g(7);
     std::shuffle(ids.begin(), ids.end(), g);
 
     int failed = 0;
-    for (int id : ids) {
+    for (int id : ids)
+    {
         std::string payload(120, 'A' + (id % 26));
         payload += "_" + std::to_string(id);
         auto rid = heap->insert_row(&txn, make_row(id, payload));
-        if (!rid.is_valid()) failed++;
+        if (!rid.is_valid())
+            failed++;
     }
     EXPECT_EQ(failed, 0) << "All inserts should succeed";
 
@@ -179,12 +197,14 @@ TEST_F(StressTest, RandomInsertLargePayload) {
     verify_bplustree_order(heap.get(), N);
 }
 
-TEST_F(StressTest, HeavyDeleteAndReinsert) {
+TEST_F(StressTest, HeavyDeleteAndReinsert)
+{
     neon::txn::Transaction txn(1);
 
     // Insert 1000 rows
     constexpr int N = 1000;
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         heap->insert_row(&txn, make_row(i, "heavy_test"));
     }
 
@@ -193,13 +213,16 @@ TEST_F(StressTest, HeavyDeleteAndReinsert) {
 
     // Delete 300 random rows
     neon::txn::Transaction del_txn(2);
-    for (int i = 0; i < 300; ++i) {
+    for (int i = 0; i < 300; ++i)
+    {
         // Find a row and delete it
         int target = dist(g);
         auto it = heap->iter();
         it.rewind();
-        while (it.valid()) {
-            if (it.current_row().values_[0].i32() == target) {
+        while (it.valid())
+        {
+            if (it.current_row().values_[0].i32() == target)
+            {
                 heap->delete_row(&del_txn, it.current_row_id());
                 break;
             }
@@ -210,7 +233,8 @@ TEST_F(StressTest, HeavyDeleteAndReinsert) {
     // Reinsert 200 new rows (some same PKs, some new)
     neon::txn::Transaction ins_txn(3);
     std::set<int> new_ids;
-    for (int i = 0; i < 200; ++i) {
+    for (int i = 0; i < 200; ++i)
+    {
         int id = dist(g);
         new_ids.insert(id);
         heap->insert_row(&ins_txn, make_row(id, "reinserted"));
@@ -222,7 +246,8 @@ TEST_F(StressTest, HeavyDeleteAndReinsert) {
     it.rewind();
     int count = 0;
     int prev = -1;
-    while (it.valid()) {
+    while (it.valid())
+    {
         int pk = it.current_row().values_[0].i32();
         // Allow >= since B+Tree currently allows duplicate PKs when reinserting
         EXPECT_GE(pk, prev);
@@ -235,19 +260,21 @@ TEST_F(StressTest, HeavyDeleteAndReinsert) {
     EXPECT_GE(count, N - 300);
 }
 
-TEST_F(StressTest, RepeatedSplitsAndScans) {
+TEST_F(StressTest, RepeatedSplitsAndScans)
+{
     // Insert rows that cause many splits, then scan after each batch
     constexpr int BATCH = 100;
     constexpr int BATCHES = 20;
 
-    for (int batch = 0; batch < BATCHES; ++batch) {
+    for (int batch = 0; batch < BATCHES; ++batch)
+    {
         neon::txn::Transaction txn(batch + 1);
-        for (int i = 0; i < BATCH; ++i) {
+        for (int i = 0; i < BATCH; ++i)
+        {
             int id = batch * BATCH + i;
             std::string payload(200, 'A' + (batch % 26));
             auto rid = heap->insert_row(&txn, make_row(id, payload));
-            ASSERT_TRUE(rid.is_valid())
-                << "Failed at batch=" << batch << " id=" << id;
+            ASSERT_TRUE(rid.is_valid()) << "Failed at batch=" << batch << " id=" << id;
         }
 
         // Verify order after each batch
@@ -258,13 +285,15 @@ TEST_F(StressTest, RepeatedSplitsAndScans) {
     verify_bplustree_order(heap.get(), BATCH * BATCHES);
 }
 
-TEST_F(StressTest, TimingLargeScale) {
+TEST_F(StressTest, TimingLargeScale)
+{
     neon::txn::Transaction txn(1);
     constexpr int N = 2000;
 
     auto start = std::chrono::steady_clock::now();
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         std::string payload = "perf_test_" + std::to_string(i);
         heap->insert_row(&txn, make_row(i, payload));
     }
@@ -275,19 +304,25 @@ TEST_F(StressTest, TimingLargeScale) {
     auto it = heap->iter();
     it.rewind();
     int count = 0;
-    while (it.valid()) { count++; it.next(); }
+    while (it.valid())
+    {
+        count++;
+        it.next();
+    }
 
     auto scan_end = std::chrono::steady_clock::now();
 
     // Update 100 rows
     neon::txn::Transaction upd_txn(2);
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < 100; ++i)
+    {
         auto it2 = heap->iter();
         it2.rewind();
-        while (it2.valid()) {
-            if (it2.current_row().values_[0].i32() == i * 20) {
-                heap->update_row(&upd_txn, it2.current_row_id(),
-                    make_row(i * 20, "updated"));
+        while (it2.valid())
+        {
+            if (it2.current_row().values_[0].i32() == i * 20)
+            {
+                heap->update_row(&upd_txn, it2.current_row_id(), make_row(i * 20, "updated"));
                 break;
             }
             it2.next();
@@ -312,11 +347,13 @@ TEST_F(StressTest, TimingLargeScale) {
 }
 
 // Test: insert with negative and zero PK values
-TEST_F(StressTest, NegativeAndZeroPK) {
+TEST_F(StressTest, NegativeAndZeroPK)
+{
     neon::txn::Transaction txn(1);
 
     std::vector<int> pks = {-500, -200, 0, -1, -499, -201, -3, -2, 1, 2, 10, 5};
-    for (int pk : pks) {
+    for (int pk : pks)
+    {
         auto rid = heap->insert_row(&txn, make_row(pk, "neg_test"));
         ASSERT_TRUE(rid.is_valid()) << "Failed PK=" << pk;
     }
@@ -326,7 +363,8 @@ TEST_F(StressTest, NegativeAndZeroPK) {
     it.rewind();
     int prev = std::numeric_limits<int>::min();
     int count = 0;
-    while (it.valid()) {
+    while (it.valid())
+    {
         int id = it.current_row().values_[0].i32();
         EXPECT_GE(id, prev) << "Order: " << id << " after " << prev;
         prev = id;
@@ -337,21 +375,27 @@ TEST_F(StressTest, NegativeAndZeroPK) {
 }
 
 // Test: interleaved insert and delete on same PK
-TEST_F(StressTest, InterleavedInsertDelete) {
+TEST_F(StressTest, InterleavedInsertDelete)
+{
     neon::txn::Transaction txn(1);
 
-    for (int cycle = 0; cycle < 10; ++cycle) {
+    for (int cycle = 0; cycle < 10; ++cycle)
+    {
         int base = cycle * 50;
-        for (int i = 0; i < 50; ++i) {
+        for (int i = 0; i < 50; ++i)
+        {
             heap->insert_row(&txn, make_row(base + i, "cycle"));
         }
         // Delete first 10 of this cycle
         neon::txn::Transaction del_txn(cycle + 100);
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 10; ++i)
+        {
             auto it = heap->iter();
             it.rewind();
-            while (it.valid()) {
-                if (it.current_row().values_[0].i32() == base + i) {
+            while (it.valid())
+            {
+                if (it.current_row().values_[0].i32() == base + i)
+                {
                     heap->delete_row(&del_txn, it.current_row_id());
                     break;
                 }
@@ -364,18 +408,22 @@ TEST_F(StressTest, InterleavedInsertDelete) {
 }
 
 // Test: full table scan after each of many inserts
-TEST_F(StressTest, ScanAfterEachInsert) {
+TEST_F(StressTest, ScanAfterEachInsert)
+{
     neon::txn::Transaction txn(1);
     constexpr int N = 500;
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         heap->insert_row(&txn, make_row(i, "scan_test"));
         // Scan every 50 inserts to verify
-        if (i % 50 == 49 || i == N - 1) {
+        if (i % 50 == 49 || i == N - 1)
+        {
             auto it = heap->iter();
             it.rewind();
             int count = 0, prev = -1;
-            while (it.valid()) {
+            while (it.valid())
+            {
                 int id = it.current_row().values_[0].i32();
                 EXPECT_GT(id, prev) << "Scan at i=" << i;
                 prev = id;
@@ -388,22 +436,27 @@ TEST_F(StressTest, ScanAfterEachInsert) {
 }
 
 // Test: update rows to larger payload sizes
-TEST_F(StressTest, UpdateToLargerPayload) {
+TEST_F(StressTest, UpdateToLargerPayload)
+{
     neon::txn::Transaction txn(1);
     constexpr int N = 200;
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         heap->insert_row(&txn, make_row(i, "small"));
     }
 
     // Update every 3rd row to a much larger payload
     neon::txn::Transaction upd_txn(2);
-    for (int i = 0; i < N; i += 3) {
+    for (int i = 0; i < N; i += 3)
+    {
         auto it = heap->iter();
         it.rewind();
-        while (it.valid()) {
+        while (it.valid())
+        {
             auto row = it.current_row();
-            if (row.values_[0].i32() == i) {
+            if (row.values_[0].i32() == i)
+            {
                 std::string big(500, 'X');
                 big += std::to_string(i);
                 heap->update_row(&upd_txn, it.current_row_id(), make_row(i, big));
@@ -418,11 +471,13 @@ TEST_F(StressTest, UpdateToLargerPayload) {
 }
 
 // Test: deep tree structure with many small payloads
-TEST_F(StressTest, DeepTreeManyRows) {
+TEST_F(StressTest, DeepTreeManyRows)
+{
     neon::txn::Transaction txn(1);
     constexpr int N = 10000;
 
-    for (int i = 0; i < N; ++i) {
+    for (int i = 0; i < N; ++i)
+    {
         auto rid = heap->insert_row(&txn, make_row(i, "x"));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
     }
@@ -431,12 +486,15 @@ TEST_F(StressTest, DeepTreeManyRows) {
     verify_bplustree_order(heap.get(), N);
 
     // Random access — find every 1000th row
-    for (int target : {0, 999, 1999, 2999, 3999, 4999, 5999, 6999, 7999, 8999, 9999}) {
+    for (int target : {0, 999, 1999, 2999, 3999, 4999, 5999, 6999, 7999, 8999, 9999})
+    {
         auto it = heap->iter();
         it.rewind();
         bool found = false;
-        while (it.valid()) {
-            if (it.current_row().values_[0].i32() == target) {
+        while (it.valid())
+        {
+            if (it.current_row().values_[0].i32() == target)
+            {
                 found = true;
                 break;
             }

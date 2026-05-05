@@ -12,21 +12,32 @@ include(FetchContent)
 # 禁用 CMake 对 C++ 模块的自动扫描（如果你不使用模块或想避免模块相关生成器限制）
 set(CMAKE_CXX_SCAN_FOR_MODULES 0)
 
+# 国内 GitHub 加速镜像（若本地有 v2raya 等代理则留空）
+set(GH_PROXY "")
+
+# 设置代理环境变量，让 FetchContent 子构建也能走代理
+if(NOT "$ENV{HTTPS_PROXY}" STREQUAL "")
+  set(ENV{HTTPS_PROXY} "$ENV{HTTPS_PROXY}")
+endif()
+if(NOT "$ENV{HTTP_PROXY}" STREQUAL "")
+  set(ENV{HTTP_PROXY} "$ENV{HTTP_PROXY}")
+endif()
+
 FetchContent_Declare(
         cpptrace
-        URL https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.1.tar.gz
+        URL ${GH_PROXY}https://github.com/jeremy-rifkin/cpptrace/archive/refs/tags/v0.7.1.tar.gz
 )
 FetchContent_MakeAvailable(cpptrace)
 
 FetchContent_Declare(
         spdlog
-        URL https://github.com/gabime/spdlog/archive/refs/tags/v1.15.0.tar.gz
+        URL ${GH_PROXY}https://github.com/gabime/spdlog/archive/refs/tags/v1.15.0.tar.gz
 )
 FetchContent_MakeAvailable(spdlog)
 
 FetchContent_Declare(
         googletest
-        URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
+        URL ${GH_PROXY}https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz
 )
 FetchContent_MakeAvailable(googletest)
 

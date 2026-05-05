@@ -3,46 +3,62 @@
 #include <cctype>
 #include <unordered_map>
 
-namespace neon::parser {
+namespace neon::parser
+{
 
-Lexer::Lexer(const std::string& input) : input_(input) {}
+Lexer::Lexer(const std::string & input) : input_(input)
+{
+}
 
-char Lexer::peek() const {
-    if (pos_ >= input_.size()) {
+char Lexer::peek() const
+{
+    if (pos_ >= input_.size())
+    {
         return '\0';
     }
     return input_[pos_];
 }
 
-char Lexer::advance() {
+char Lexer::advance()
+{
     char c = peek();
-    if (c == '\n') {
+    if (c == '\n')
+    {
         line_++;
         col_ = 1;
-    } else {
+    }
+    else
+    {
         col_++;
     }
     pos_++;
     return c;
 }
 
-void Lexer::skip_whitespace() {
-    while (std::isspace(static_cast<unsigned char>(peek()))) {
+void Lexer::skip_whitespace()
+{
+    while (std::isspace(static_cast<unsigned char>(peek())))
+    {
         advance();
     }
 }
 
-void Lexer::skip_line_comment() {
-    while (peek() != '\0' && peek() != '\n') {
+void Lexer::skip_line_comment()
+{
+    while (peek() != '\0' && peek() != '\n')
+    {
         advance();
     }
 }
 
-void Lexer::skip_block_comment() {
+void Lexer::skip_block_comment()
+{
     advance(); // '/'
     advance(); // '*'
-    while (peek() != '\0') {
-        if (peek() == '*' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '/') {
+    while (peek() != '\0')
+    {
+        if (peek() == '*' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '/')
+        {
             advance(); // '*'
             advance(); // '/'
             return;
@@ -51,15 +67,19 @@ void Lexer::skip_block_comment() {
     }
 }
 
-Token Lexer::read_number() {
+Token Lexer::read_number()
+{
     int start_line = line_;
     int start_col = col_;
     std::string value;
     bool is_float = false;
 
-    while (std::isdigit(static_cast<unsigned char>(peek())) || peek() == '.') {
-        if (peek() == '.') {
-            if (is_float) {
+    while (std::isdigit(static_cast<unsigned char>(peek())) || peek() == '.')
+    {
+        if (peek() == '.')
+        {
+            if (is_float)
+            {
                 break;
             }
             is_float = true;
@@ -71,46 +91,54 @@ Token Lexer::read_number() {
     return Token{type, value, start_line, start_col};
 }
 
-Token Lexer::read_string() {
+Token Lexer::read_string()
+{
     int start_line = line_;
     int start_col = col_;
     char quote = advance(); // ' or "
     std::string value;
 
-    while (peek() != '\0' && peek() != quote) {
+    while (peek() != '\0' && peek() != quote)
+    {
         value.push_back(advance());
     }
 
-    if (peek() == quote) {
+    if (peek() == quote)
+    {
         advance(); // closing quote
     }
 
     return Token{TokenType::String, value, start_line, start_col};
 }
 
-Token Lexer::read_identifier_or_keyword() {
+Token Lexer::read_identifier_or_keyword()
+{
     int start_line = line_;
     int start_col = col_;
     std::string value;
 
-    while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_') {
+    while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_')
+    {
         value.push_back(advance());
     }
 
     std::string lower;
     lower.reserve(value.size());
-    for (char c : value) {
+    for (char c : value)
+    {
         lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     }
 
     TokenType type = keyword_lookup(lower);
-    if (type != TokenType::Identifier) {
+    if (type != TokenType::Identifier)
+    {
         return Token{type, value, start_line, start_col};
     }
     return Token{TokenType::Identifier, value, start_line, start_col};
 }
 
-TokenType Lexer::keyword_lookup(const std::string& word) {
+TokenType Lexer::keyword_lookup(const std::string & word)
+{
     static const std::unordered_map<std::string, TokenType> keywords = {
         {"select", TokenType::Select},
         {"from", TokenType::From},
@@ -169,22 +197,32 @@ TokenType Lexer::keyword_lookup(const std::string& word) {
         {"min", TokenType::Min},
         {"max", TokenType::Max},
         {"distinct", TokenType::Distinct},
+        {"show", TokenType::Show},
+        {"databases", TokenType::Databases},
+        {"describe", TokenType::Describe},
+        {"tables", TokenType::Tables},
+        {"variables", TokenType::Variables},
+        {"status", TokenType::Status},
     };
 
     auto it = keywords.find(word);
-    if (it != keywords.end()) {
+    if (it != keywords.end())
+    {
         return it->second;
     }
     return TokenType::Identifier;
 }
 
-std::vector<Token> Lexer::tokenize() {
+std::vector<Token> Lexer::tokenize()
+{
     std::vector<Token> tokens;
 
-    while (peek() != '\0') {
+    while (peek() != '\0')
+    {
         skip_whitespace();
 
-        if (peek() == '\0') {
+        if (peek() == '\0')
+        {
             break;
         }
 
@@ -193,55 +231,80 @@ std::vector<Token> Lexer::tokenize() {
         int start_col = col_;
 
         // Line comment
-        if (c == '-' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '-') {
+        if (c == '-' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '-')
+        {
             skip_line_comment();
             continue;
         }
 
         // Block comment
-        if (c == '/' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '*') {
+        if (c == '/' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '*')
+        {
             skip_block_comment();
             continue;
         }
 
         // String literals
-        if (c == '\'' || c == '"') {
+        if (c == '\'' || c == '"')
+        {
             tokens.push_back(read_string());
             continue;
         }
 
         // Numbers
-        if (std::isdigit(static_cast<unsigned char>(c))) {
+        if (std::isdigit(static_cast<unsigned char>(c)))
+        {
             tokens.push_back(read_number());
             continue;
         }
 
+        // System variables (@@xxx)
+        if (c == '@' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '@')
+        {
+            advance(); // first @
+            advance(); // second @
+            start_line = line_;
+            start_col = col_;
+            std::string var_name;
+            while (std::isalnum(static_cast<unsigned char>(peek())) || peek() == '_' || peek() == '.')
+            {
+                var_name.push_back(advance());
+            }
+            tokens.push_back(Token{TokenType::SystemVar, var_name, start_line, start_col});
+            continue;
+        }
+
         // Identifiers and keywords
-        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+        if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
+        {
             tokens.push_back(read_identifier_or_keyword());
             continue;
         }
 
         // Multi-char operators
-        if (c == '!' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=') {
+        if (c == '!' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=')
+        {
             advance();
             advance();
             tokens.push_back(Token{TokenType::Ne, "!=", start_line, start_col});
             continue;
         }
-        if (c == '<' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '>') {
+        if (c == '<' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '>')
+        {
             advance();
             advance();
             tokens.push_back(Token{TokenType::Ne, "<>", start_line, start_col});
             continue;
         }
-        if (c == '<' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=') {
+        if (c == '<' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=')
+        {
             advance();
             advance();
             tokens.push_back(Token{TokenType::Le, "<=", start_line, start_col});
             continue;
         }
-        if (c == '>' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=') {
+        if (c == '>' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '=')
+        {
             advance();
             advance();
             tokens.push_back(Token{TokenType::Ge, ">=", start_line, start_col});
@@ -250,7 +313,8 @@ std::vector<Token> Lexer::tokenize() {
 
         // Single-char operators and delimiters
         advance();
-        switch (c) {
+        switch (c)
+        {
             case '+':
                 tokens.push_back(Token{TokenType::Plus, "+", start_line, start_col});
                 break;

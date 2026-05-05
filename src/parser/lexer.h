@@ -1,12 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
-namespace neon::parser {
+namespace neon::parser
+{
 
-enum class TokenType {
+enum class TokenType
+{
     // Literals
     Integer,
     Float,
@@ -73,6 +75,13 @@ enum class TokenType {
     Min,
     Max,
     Distinct,
+    Show,
+    Databases,
+    Describe,
+    Tables,
+    Variables,
+    Status,
+    SystemVar,
 
     // Operators
     Plus,
@@ -98,16 +107,18 @@ enum class TokenType {
     Invalid
 };
 
-struct Token {
+struct Token
+{
     TokenType type;
     std::string value;
     int line;
     int col;
 };
 
-class Lexer {
+class Lexer
+{
 public:
-    explicit Lexer(const std::string& input);
+    explicit Lexer(const std::string & input);
     std::vector<Token> tokenize();
 
 private:
@@ -124,7 +135,7 @@ private:
     Token read_number();
     Token read_string();
     Token read_identifier_or_keyword();
-    TokenType keyword_lookup(const std::string& word);
+    TokenType keyword_lookup(const std::string & word);
 };
 
 } // namespace neon::parser

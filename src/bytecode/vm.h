@@ -1,48 +1,50 @@
 #pragma once
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+#include "base/error.h"
 #include "bytecode/program.h"
 #include "catalog/schema_mgr.h"
 #include "src/storage/storage_engine.h"
 #include "src/storage/table_heap.h"
 #include "src/trancation/txn.h"
-#include "type/value.h"
 #include "type/tuple.h"
-#include "base/error.h"
-#include <vector>
-#include <string>
-#include <memory>
-#include <unordered_map>
-#include <optional>
+#include "type/value.h"
 
-namespace neon::bytecode {
+namespace neon::bytecode
+{
 
-struct ExecuteResult {
-    bool success = false;
+struct ExecuteSuccess
+{
     std::vector<std::shared_ptr<neon::type::Row>> rows;
     std::vector<std::string> columns;
     std::string message;
-    neon::base::Error error;
     int64_t rows_affected = 0;
 };
 
-class VirtualMachine {
+class VirtualMachine
+{
 public:
-    VirtualMachine(neon::catalog::SchemaManager& schema_mgr, neon::storage::StorageEngine& engine);
-    
-    ExecuteResult execute(const Program& program);
+    VirtualMachine(neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine);
+
+    neon::base::Result<ExecuteSuccess> execute(const Program & program);
 
 private:
-    neon::catalog::SchemaManager& schema_mgr_;
-    neon::storage::StorageEngine& engine_;
-    neon::txn::Transaction* txn_ = nullptr;
-    
+    neon::catalog::SchemaManager & schema_mgr_;
+    neon::storage::StorageEngine & engine_;
+    neon::txn::Transaction * txn_ = nullptr;
+
     // Execution state
     std::vector<neon::type::Value> stack_;
     int32_t pc_ = 0;
-    
+
     // Cursor management
-    struct Cursor {
+    struct Cursor
+    {
         std::string table_name;
-        neon::storage::TableHeap* heap = nullptr;
+        neon::storage::TableHeap * heap = nullptr;
         std::unique_ptr<neon::storage::TableIterator> iter;
         neon::catalog::Schema schema;
         bool is_write = false;
@@ -52,39 +54,53 @@ private:
         bool has_current = false;
     };
     std::unordered_map<int32_t, Cursor> cursors_;
-    
+
     // Sorter management
-    struct SortKey {
+    struct SortKey
+    {
         int32_t column_index = 0;
         bool ascending = true;
     };
-    struct Sorter {
+    struct Sorter
+    {
         std::vector<std::shared_ptr<neon::type::Row>> rows;
         std::vector<SortKey> sort_keys;
         int32_t current_row = -1;
     };
     std::unordered_map<int32_t, Sorter> sorters_;
-    
+
     // Aggregation management
-    struct AggState {
+    struct AggState
+    {
         int32_t func_type = 0;
         neon::type::Value result;
         int64_t count = 0;
         bool initialized = false;
     };
     std::vector<AggState> agg_states_;
-    
+
     // Pending row for MakeRow/InsertRow
     std::optional<neon::type::Row> pending_row_;
-    
+
     // Result collection
-    ExecuteResult result_;
-    
+    ExecuteSuccess result_;
+
+    // Helper: abort txn and return unexpected error
+    auto error(const neon::base::Error & err)
+    {
+        if (txn_)
+        {
+            engine_.abort_txn(txn_);
+            txn_ = nullptr;
+        }
+        return std::unexpected(err);
+    }
+
     // Stack operations
-    void push(const neon::type::Value& val);
+    void push(const neon::type::Value & val);
     neon::type::Value pop();
-    const neon::type::Value& peek() const;
-    
+    const neon::type::Value & peek() const;
+
     // Reset state for new execution
     void reset();
 };

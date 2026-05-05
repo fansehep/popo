@@ -2,9 +2,9 @@
 
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include "src/type/value.h"
-#include <memory>
 
 
 namespace neon::type

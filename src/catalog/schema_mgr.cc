@@ -11,7 +11,7 @@ namespace neon::catalog
 using neon::base::Errno;
 using neon::base::Error;
 
-std::pair<bool, SchemaId> SchemaManager::create_table(const std::string & table_name, const std::vector<Column> & columns)
+neon::base::Result<SchemaId> SchemaManager::create_table(const std::string & table_name, const std::vector<Column> & columns)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -19,14 +19,14 @@ std::pair<bool, SchemaId> SchemaManager::create_table(const std::string & table_
     const auto it = schema_map_.find(table_name);
     if (it != schema_map_.end())
     {
-        return std::make_pair(false, SchemaId(0)); // 错误情况返回0作为ID
+        return std::unexpected(Error(Errno::TableAlreadyExists, "table already exists: " + table_name));
     }
 
     // 2. 检查列属性是否合法
-    auto [is_valid, error] = validate_columns(columns);
-    if (!is_valid)
+    auto col_result = validate_columns(columns);
+    if (!col_result)
     {
-        return std::make_pair(false, SchemaId(0)); // 错误情况返回0作为ID
+        return std::unexpected(col_result.error());
     }
 
     // 3. 创建新的Schema
@@ -39,11 +39,10 @@ std::pair<bool, SchemaId> SchemaManager::create_table(const std::string & table_
     // 4. 添加到映射中
     schema_map_[table_name] = schema;
 
-    // printf("Created table %s with id %d\n", table_name.c_str(), schema->id_); // 简单的日志输出
-    return std::make_pair(true, schema->id_);
+    return schema->id_;
 }
 
-std::pair<bool, Error> SchemaManager::delete_table(const std::string & table_name)
+neon::base::Result<void> SchemaManager::delete_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -51,15 +50,15 @@ std::pair<bool, Error> SchemaManager::delete_table(const std::string & table_nam
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, Error(Errno::TableNotFound, "table not found"));
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
     // 删除表
     schema_map_.erase(it);
-    return std::make_pair(true, Error(Errno::InternalErr, "")); // 返回空的Error表示成功
+    return {};
 }
 
-std::pair<bool, SchemaRef> SchemaManager::query_table(const std::string & table_name)
+neon::base::Result<SchemaRef> SchemaManager::query_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -67,13 +66,13 @@ std::pair<bool, SchemaRef> SchemaManager::query_table(const std::string & table_
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, SchemaRef(nullptr));
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    return std::make_pair(true, it->second);
+    return it->second;
 }
 
-std::pair<bool, Error> SchemaManager::modify_table(const std::string & table_name, const std::vector<Column> & new_columns)
+neon::base::Result<void> SchemaManager::modify_table(const std::string & table_name, const std::vector<Column> & new_columns)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -81,24 +80,24 @@ std::pair<bool, Error> SchemaManager::modify_table(const std::string & table_nam
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, Error(Errno::TableNotFound, "table not found"));
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
     // 验证新列定义
-    auto [is_valid, error] = validate_columns(new_columns);
-    if (!is_valid)
+    auto col_result = validate_columns(new_columns);
+    if (!col_result)
     {
-        return std::make_pair(false, error);
+        return std::unexpected(col_result.error());
     }
 
     // 更新表结构
     it->second->columns_ = new_columns;
     it->second->primary_key_col_idx_ = find_primary_key_column(new_columns);
 
-    return std::make_pair(true, Error(Errno::InternalErr, "")); // 返回空的Error表示成功
+    return {};
 }
 
-std::pair<bool, Error> SchemaManager::create_index(
+neon::base::Result<void> SchemaManager::create_index(
     const std::string & table_name, const std::string & index_name, const std::vector<int32_t> & index_cols, bool is_unique)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
@@ -107,7 +106,7 @@ std::pair<bool, Error> SchemaManager::create_index(
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, Error(Errno::TableNotFound, "table not found"));
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
     // 检查索引是否已存在
@@ -115,7 +114,7 @@ std::pair<bool, Error> SchemaManager::create_index(
     {
         if (index.index_name_ == index_name)
         {
-            return std::make_pair(false, Error(Errno::InvalidArg, "index already exists"));
+            return std::unexpected(Error(Errno::InvalidArg, "index already exists"));
         }
     }
 
@@ -124,7 +123,7 @@ std::pair<bool, Error> SchemaManager::create_index(
     {
         if (col_idx < 0 || col_idx >= static_cast<int32_t>(it->second->columns_.size()))
         {
-            return std::make_pair(false, Error(Errno::InvalidArg, "invalid column index"));
+            return std::unexpected(Error(Errno::InvalidArg, "invalid column index"));
         }
     }
 
@@ -136,11 +135,10 @@ std::pair<bool, Error> SchemaManager::create_index(
 
     it->second->indexes_.push_back(new_index);
 
-    // printf("Created index %s on table %s\n", index_name.c_str(), table_name.c_str()); // 简单的日志输出
-    return std::make_pair(true, Error(Errno::InternalErr, "")); // 返回空的Error表示成功
+    return {};
 }
 
-std::pair<bool, Error> SchemaManager::delete_index(const std::string & table_name, const std::string & index_name)
+neon::base::Result<void> SchemaManager::delete_index(const std::string & table_name, const std::string & index_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -148,7 +146,7 @@ std::pair<bool, Error> SchemaManager::delete_index(const std::string & table_nam
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, Error(Errno::TableNotFound, "table not found"));
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
     // 查找并删除索引
@@ -158,16 +156,15 @@ std::pair<bool, Error> SchemaManager::delete_index(const std::string & table_nam
 
     if (index_it == indexes.end())
     {
-        return std::make_pair(false, Error(Errno::InvalidArg, "index not found"));
+        return std::unexpected(Error(Errno::InvalidArg, "index not found"));
     }
 
     indexes.erase(index_it);
 
-    // printf("Deleted index %s from table %s\n", index_name.c_str(), table_name.c_str()); // 简单的日志输出
-    return std::make_pair(true, Error(Errno::InternalErr, "")); // 返回空的Error表示成功
+    return {};
 }
 
-std::pair<bool, std::vector<SchemaIndex>> SchemaManager::list_indexes(const std::string & table_name)
+neon::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -175,13 +172,13 @@ std::pair<bool, std::vector<SchemaIndex>> SchemaManager::list_indexes(const std:
     const auto it = schema_map_.find(table_name);
     if (it == schema_map_.end())
     {
-        return std::make_pair(false, std::vector<SchemaIndex>());
+        return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    return std::make_pair(true, it->second->indexes_);
+    return it->second->indexes_;
 }
 
-std::pair<bool, Error> SchemaManager::validate_columns(const std::vector<Column> & columns)
+neon::base::Result<void> SchemaManager::validate_columns(const std::vector<Column> & columns)
 {
     // 检查是否有重复的列名
     std::unordered_set<std::string> column_names;
@@ -192,7 +189,7 @@ std::pair<bool, Error> SchemaManager::validate_columns(const std::vector<Column>
         // 检查列名是否重复
         if (column_names.find(column.column_name_) != column_names.end())
         {
-            return std::make_pair(false, Error(Errno::InvalidColumnDefinition, "duplicate column name"));
+            return std::unexpected(Error(Errno::InvalidColumnDefinition, "duplicate column name"));
         }
         column_names.insert(column.column_name_);
 
@@ -205,17 +202,17 @@ std::pair<bool, Error> SchemaManager::validate_columns(const std::vector<Column>
         // 检查主键约束
         if (column.is_primary_key_ && column.is_nullable_)
         {
-            return std::make_pair(false, Error(Errno::InvalidColumnDefinition, "primary key column cannot be nullable"));
+            return std::unexpected(Error(Errno::InvalidColumnDefinition, "primary key column cannot be nullable"));
         }
     }
 
     // 检查是否恰好有一个主键
     if (primary_key_count != 1)
     {
-        return std::make_pair(false, Error(Errno::InvalidColumnDefinition, "table must have exactly one primary key"));
+        return std::unexpected(Error(Errno::InvalidColumnDefinition, "table must have exactly one primary key"));
     }
 
-    return std::make_pair(true, Error(Errno::InternalErr, "")); // 返回空的Error表示成功
+    return {};
 }
 
 int32_t SchemaManager::find_primary_key_column(const std::vector<Column> & columns)

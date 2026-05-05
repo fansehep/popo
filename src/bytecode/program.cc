@@ -1,14 +1,18 @@
 #include "bytecode/program.h"
 #include <sstream>
 
-namespace neon::bytecode {
+namespace neon::bytecode
+{
 
-std::string Program::disassemble() const {
+std::string Program::disassemble() const
+{
     std::ostringstream oss;
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        const auto& inst = instructions[i];
+    for (size_t i = 0; i < instructions.size(); ++i)
+    {
+        const auto & inst = instructions[i];
         oss << i << ": " << opcode_name(inst.op);
-        switch (inst.op) {
+        switch (inst.op)
+        {
             case OpCode::Const:
             case OpCode::Pop:
             case OpCode::Add:
@@ -36,7 +40,8 @@ std::string Program::disassemble() const {
             case OpCode::OpenWrite:
             case OpCode::SortKeyDef:
                 oss << " " << inst.operand1 << " " << inst.operand2;
-                if (inst.operand3 != 0) oss << " " << inst.operand3;
+                if (inst.operand3 != 0)
+                    oss << " " << inst.operand3;
                 break;
             case OpCode::Rewind:
             case OpCode::Next:
@@ -63,7 +68,8 @@ std::string Program::disassemble() const {
             case OpCode::CreateTable:
             case OpCode::DropTable:
                 oss << " " << inst.operand1;
-                if (inst.operand2 != 0) oss << " " << inst.operand2;
+                if (inst.operand2 != 0)
+                    oss << " " << inst.operand2;
                 break;
             case OpCode::ColumnName:
             case OpCode::UpdateRow:

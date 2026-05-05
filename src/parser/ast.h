@@ -1,71 +1,106 @@
 #pragma once
 
-#include <string>
-#include <vector>
 #include <memory>
 #include <optional>
+#include <string>
 #include <variant>
+#include <vector>
 #include "type/value.h"
 
-namespace neon::parser {
+namespace neon::parser
+{
 
 // Forward declarations
 struct Expr;
 using ExprPtr = std::shared_ptr<Expr>;
 
 // Expression types
-enum class ExprType {
-    Literal, ColumnRef, BinaryOp, UnaryOp, FunctionCall, Star
+enum class ExprType
+{
+    Literal,
+    ColumnRef,
+    BinaryOp,
+    UnaryOp,
+    FunctionCall,
+    Star
 };
 
-enum class BinaryOpType {
+enum class BinaryOpType
+{
     // Arithmetic
-    Add, Sub, Mul, Div,
+    Add,
+    Sub,
+    Mul,
+    Div,
     // Comparison
-    Eq, Ne, Lt, Le, Gt, Ge,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
     // Logical
-    And, Or
+    And,
+    Or
 };
 
-enum class UnaryOpType { Not, Neg };
+enum class UnaryOpType
+{
+    Not,
+    Neg
+};
 
-enum class AggFuncType { Count, Sum, Avg, Min, Max };
+enum class AggFuncType
+{
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max
+};
 
-struct Expr {
+struct Expr
+{
     ExprType type;
     virtual ~Expr() = default;
 };
 
-struct LiteralExpr : Expr {
+struct LiteralExpr : Expr
+{
     neon::type::Value value;
     LiteralExpr() { type = ExprType::Literal; }
 };
 
-struct ColumnRefExpr : Expr {
-    std::string table_name;  // optional, for t.col
+struct ColumnRefExpr : Expr
+{
+    std::string table_name; // optional, for t.col
     std::string column_name;
     ColumnRefExpr() { type = ExprType::ColumnRef; }
 };
 
-struct StarExpr : Expr {
-    std::string table_name;  // optional, for t.*
+struct StarExpr : Expr
+{
+    std::string table_name; // optional, for t.*
     StarExpr() { type = ExprType::Star; }
 };
 
-struct BinaryOpExpr : Expr {
+struct BinaryOpExpr : Expr
+{
     BinaryOpType op;
     ExprPtr left;
     ExprPtr right;
     BinaryOpExpr() { type = ExprType::BinaryOp; }
 };
 
-struct UnaryOpExpr : Expr {
+struct UnaryOpExpr : Expr
+{
     UnaryOpType op;
     ExprPtr operand;
     UnaryOpExpr() { type = ExprType::UnaryOp; }
 };
 
-struct FunctionCallExpr : Expr {
+struct FunctionCallExpr : Expr
+{
     AggFuncType func;
     std::vector<ExprPtr> args;
     bool is_distinct = false;
@@ -73,32 +108,46 @@ struct FunctionCallExpr : Expr {
 };
 
 // Order by item
-struct OrderByItem {
+struct OrderByItem
+{
     ExprPtr expr;
     bool ascending = true;
 };
 
 // Join type
-enum class JoinType { Inner, Left, Right, Cross };
+enum class JoinType
+{
+    Inner,
+    Left,
+    Right,
+    Cross
+};
 
 // Table reference (can be a simple table or a join)
 struct TableRef;
 using TableRefPtr = std::shared_ptr<TableRef>;
 
-enum class TableRefType { Simple, Join };
+enum class TableRefType
+{
+    Simple,
+    Join
+};
 
-struct TableRef {
+struct TableRef
+{
     TableRefType type;
     virtual ~TableRef() = default;
 };
 
-struct SimpleTableRef : TableRef {
+struct SimpleTableRef : TableRef
+{
     std::string table_name;
     std::string alias;
     SimpleTableRef() { type = TableRefType::Simple; }
 };
 
-struct JoinTableRef : TableRef {
+struct JoinTableRef : TableRef
+{
     JoinType join_type;
     TableRefPtr left;
     TableRefPtr right;
@@ -107,7 +156,8 @@ struct JoinTableRef : TableRef {
 };
 
 // Column definition for CREATE TABLE
-struct ColumnDef {
+struct ColumnDef
+{
     std::string name;
     neon::type::ValueType data_type;
     int32_t type_len = 0;
@@ -118,63 +168,129 @@ struct ColumnDef {
 };
 
 // Update assignment: SET col = expr
-struct UpdateAssignment {
+struct UpdateAssignment
+{
     std::string column_name;
     ExprPtr value;
 };
 
 // Statement types
-enum class StmtType {
-    Select, Insert, CreateTable, Update, Delete, DropTable
+enum class StmtType
+{
+    Select,
+    Insert,
+    CreateTable,
+    Update,
+    Delete,
+    DropTable,
+    ShowTables,
+    Describe,
+    ShowDatabases,
+    SetVar,
+    ShowVariables,
+    ShowStatus,
+    SelectDatabase,
+    SelectSystemVar
 };
 
-struct Statement {
+struct Statement
+{
     StmtType type;
     virtual ~Statement() = default;
 };
 using StmtPtr = std::shared_ptr<Statement>;
 
-struct SelectStatement : Statement {
-    std::vector<ExprPtr> select_list;      // projection columns
-    TableRefPtr from;                       // FROM clause
-    ExprPtr where;                          // WHERE clause (optional)
-    std::vector<ExprPtr> group_by;         // GROUP BY (optional)
-    ExprPtr having;                         // HAVING (optional)
-    std::vector<OrderByItem> order_by;     // ORDER BY (optional)
-    std::optional<int64_t> limit;          // LIMIT (optional)
+struct SelectStatement : Statement
+{
+    std::vector<ExprPtr> select_list; // projection columns
+    TableRefPtr from; // FROM clause
+    ExprPtr where; // WHERE clause (optional)
+    std::vector<ExprPtr> group_by; // GROUP BY (optional)
+    ExprPtr having; // HAVING (optional)
+    std::vector<OrderByItem> order_by; // ORDER BY (optional)
+    std::optional<int64_t> limit; // LIMIT (optional)
     SelectStatement() { type = StmtType::Select; }
 };
 
-struct InsertStatement : Statement {
+struct InsertStatement : Statement
+{
     std::string table_name;
-    std::vector<std::string> columns;       // optional column list
+    std::vector<std::string> columns; // optional column list
     std::vector<std::vector<ExprPtr>> values; // VALUES rows
     InsertStatement() { type = StmtType::Insert; }
 };
 
-struct CreateTableStatement : Statement {
+struct CreateTableStatement : Statement
+{
     std::string table_name;
     std::vector<ColumnDef> columns;
     CreateTableStatement() { type = StmtType::CreateTable; }
 };
 
-struct UpdateStatement : Statement {
+struct UpdateStatement : Statement
+{
     std::string table_name;
     std::vector<UpdateAssignment> assignments;
-    ExprPtr where;  // optional
+    ExprPtr where; // optional
     UpdateStatement() { type = StmtType::Update; }
 };
 
-struct DeleteStatement : Statement {
+struct DeleteStatement : Statement
+{
     std::string table_name;
-    ExprPtr where;  // optional
+    ExprPtr where; // optional
     DeleteStatement() { type = StmtType::Delete; }
 };
 
-struct DropTableStatement : Statement {
+struct DropTableStatement : Statement
+{
     std::string table_name;
     bool if_exists = false;
     DropTableStatement() { type = StmtType::DropTable; }
+};
+
+struct ShowTablesStatement : Statement
+{
+    ShowTablesStatement() { type = StmtType::ShowTables; }
+};
+
+struct DescribeStatement : Statement
+{
+    std::string table_name;
+    DescribeStatement() { type = StmtType::Describe; }
+};
+
+struct ShowDatabasesStatement : Statement
+{
+    ShowDatabasesStatement() { type = StmtType::ShowDatabases; }
+};
+
+struct SetVarStatement : Statement
+{
+    std::string var_name;
+    std::string value;
+    SetVarStatement() { type = StmtType::SetVar; }
+};
+
+struct ShowVariablesStatement : Statement
+{
+    ShowVariablesStatement() { type = StmtType::ShowVariables; }
+};
+
+struct ShowStatusStatement : Statement
+{
+    ShowStatusStatement() { type = StmtType::ShowStatus; }
+};
+
+struct SelectDatabaseStatement : Statement
+{
+    SelectDatabaseStatement() { type = StmtType::SelectDatabase; }
+};
+
+struct SelectSystemVarStatement : Statement
+{
+    std::string var_name;
+    SelectSystemVarStatement() { type = StmtType::SelectSystemVar; }
 };
 
 } // namespace neon::parser

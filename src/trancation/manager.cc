@@ -1,11 +1,14 @@
 #include "src/trancation/manager.h"
 
-namespace neon::txn {
+namespace neon::txn
+{
 
-TxnManager::TxnManager(neon::storage::RedoLogManager* redo_log)
-    : redo_log_(redo_log) {}
+TxnManager::TxnManager(neon::storage::RedoLogManager * redo_log) : redo_log_(redo_log)
+{
+}
 
-Transaction* TxnManager::begin_txn() {
+Transaction * TxnManager::begin_txn()
+{
     auto txn_id = next_txn_id_.fetch_add(1);
     auto txn = std::make_unique<Transaction>(txn_id);
 
@@ -16,7 +19,7 @@ Transaction* TxnManager::begin_txn() {
     auto lsn = redo_log_->append(begin_record);
     txn->set_start_lsn(lsn);
 
-    Transaction* raw_ptr = txn.get();
+    Transaction * raw_ptr = txn.get();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         active_txns_.emplace(txn_id, std::move(txn));
@@ -24,7 +27,8 @@ Transaction* TxnManager::begin_txn() {
     return raw_ptr;
 }
 
-void TxnManager::commit(Transaction* txn) {
+void TxnManager::commit(Transaction * txn)
+{
     // Log COMMIT record
     neon::storage::LogRecord commit_record;
     commit_record.txn_id = txn->txn_id();
@@ -37,11 +41,14 @@ void TxnManager::commit(Transaction* txn) {
     txn->set_state(TxnState::COMMITTED);
 }
 
-void TxnManager::abort(Transaction* txn, UndoCallback undo_fn) {
+void TxnManager::abort(Transaction * txn, UndoCallback undo_fn)
+{
     // Undo write set in reverse order
-    const auto& write_set = txn->write_set();
-    for (auto it = write_set.rbegin(); it != write_set.rend(); ++it) {
-        if (undo_fn) {
+    const auto & write_set = txn->write_set();
+    for (auto it = write_set.rbegin(); it != write_set.rend(); ++it)
+    {
+        if (undo_fn)
+        {
             undo_fn(*it);
         }
     }
@@ -57,18 +64,21 @@ void TxnManager::abort(Transaction* txn, UndoCallback undo_fn) {
     txn->set_state(TxnState::ABORTED);
 }
 
-Transaction* TxnManager::get_txn(neon::storage::txn_id_t txn_id) {
+Transaction * TxnManager::get_txn(neon::storage::txn_id_t txn_id)
+{
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = active_txns_.find(txn_id);
-    if (it != active_txns_.end()) {
+    if (it != active_txns_.end())
+    {
         return it->second.get();
     }
     return nullptr;
 }
 
-void TxnManager::remove_txn(neon::storage::txn_id_t txn_id) {
+void TxnManager::remove_txn(neon::storage::txn_id_t txn_id)
+{
     std::lock_guard<std::mutex> lock(mutex_);
     active_txns_.erase(txn_id);
 }
 
-}  // namespace neon::txn
+} // namespace neon::txn

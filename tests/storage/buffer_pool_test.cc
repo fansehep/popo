@@ -1,22 +1,24 @@
+#include <cstring>
+#include <filesystem>
+#include <random>
 #include <gtest/gtest.h>
 #include "src/storage/buffer_pool.h"
-#include "src/storage/disk_manager.h"
 #include "src/storage/common.h"
+#include "src/storage/disk_manager.h"
 #include "src/storage/page.h"
-#include <filesystem>
-#include <cstring>
-#include <random>
 
 using namespace neon::storage;
 namespace fs = std::filesystem;
 
-class BufferPoolTest : public ::testing::Test {
+class BufferPoolTest : public ::testing::Test
+{
 protected:
     std::string test_dir;
     std::unique_ptr<DiskManager> dm;
     std::unique_ptr<BufferPoolManager> bpm;
 
-    void SetUp() override {
+    void SetUp() override
+    {
         std::random_device rd;
         test_dir = fs::temp_directory_path().string() + "/neon_bp_test_" + std::to_string(rd());
         fs::create_directories(test_dir);
@@ -25,14 +27,16 @@ protected:
         bpm = std::make_unique<BufferPoolManager>(10, dm.get());
     }
 
-    void TearDown() override {
+    void TearDown() override
+    {
         bpm.reset();
         dm.reset();
         fs::remove_all(test_dir);
     }
 };
 
-TEST_F(BufferPoolTest, FetchNewPage) {
+TEST_F(BufferPoolTest, FetchNewPage)
+{
     page_id_t pid;
     auto guard = bpm->new_page("t1", pid);
     ASSERT_TRUE(guard.is_valid());
@@ -53,7 +57,8 @@ TEST_F(BufferPoolTest, FetchNewPage) {
     EXPECT_EQ(std::string(guard2.data(), payload.size()), payload);
 }
 
-TEST_F(BufferPoolTest, FetchFromDisk) {
+TEST_F(BufferPoolTest, FetchFromDisk)
+{
     page_id_t pid;
     {
         auto guard = bpm->new_page("t1", pid);
@@ -75,12 +80,14 @@ TEST_F(BufferPoolTest, FetchFromDisk) {
     EXPECT_EQ(std::string(guard.data(), expected.size()), expected);
 }
 
-TEST_F(BufferPoolTest, EvictionPolicy) {
+TEST_F(BufferPoolTest, EvictionPolicy)
+{
     // Small pool: 3 frames
     bpm = std::make_unique<BufferPoolManager>(3, dm.get());
 
     page_id_t pids[4];
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i)
+    {
         auto guard = bpm->new_page("t1", pids[i]);
         ASSERT_TRUE(guard.is_valid());
         std::string payload = "page_" + std::to_string(i);
@@ -99,7 +106,8 @@ TEST_F(BufferPoolTest, EvictionPolicy) {
     guard = PageGuard{};
 
     // Should still be able to fetch any page (evicted pages read from disk)
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 4; ++i)
+    {
         auto g = bpm->fetch_page("t1", pids[i]);
         ASSERT_TRUE(g.is_valid()) << "Failed to fetch page " << i;
         std::string expected = "page_" + std::to_string(i);
@@ -108,7 +116,8 @@ TEST_F(BufferPoolTest, EvictionPolicy) {
     }
 }
 
-TEST_F(BufferPoolTest, DirtyPageFlush) {
+TEST_F(BufferPoolTest, DirtyPageFlush)
+{
     page_id_t pid;
     {
         auto guard = bpm->new_page("t1", pid);
@@ -129,7 +138,8 @@ TEST_F(BufferPoolTest, DirtyPageFlush) {
     EXPECT_EQ(std::string(buf, expected.size()), expected);
 }
 
-TEST_F(BufferPoolTest, PageGuardRAII) {
+TEST_F(BufferPoolTest, PageGuardRAII)
+{
     page_id_t pid;
     {
         auto guard = bpm->new_page("t1", pid);

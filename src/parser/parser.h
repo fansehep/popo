@@ -1,30 +1,33 @@
 #pragma once
 
+#include <expected>
+#include <string>
+#include <utility>
+#include <vector>
+#include "base/error.h"
 #include "parser/ast.h"
 #include "parser/lexer.h"
-#include "base/error.h"
-#include <string>
-#include <vector>
-#include <utility>
 
-namespace neon::parser {
+namespace neon::parser
+{
 
-class Parser {
+class Parser
+{
 public:
     // Parse a SQL string, returns a list of statements
-    std::pair<std::vector<StmtPtr>, base::Error> parse(const std::string& sql);
+    neon::base::Result<std::vector<StmtPtr>> parse(const std::string & sql);
 
 private:
     std::vector<Token> tokens_;
     size_t pos_ = 0;
 
     // Token access
-    const Token& current() const;
-    const Token& peek_token() const;  // look ahead
-    const Token& advance_token();
+    const Token & current() const;
+    const Token & peek_token() const; // look ahead
+    const Token & advance_token();
     bool check(TokenType type) const;
-    bool match(TokenType type);       // consume if match
-    Token expect(TokenType type);     // consume or throw
+    bool match(TokenType type); // consume if match
+    Token expect(TokenType type); // consume or throw
     bool is_at_end() const;
 
     // Statement parsing
@@ -35,6 +38,11 @@ private:
     StmtPtr parse_update();
     StmtPtr parse_delete();
     StmtPtr parse_drop();
+    StmtPtr parse_show();
+    StmtPtr parse_describe();
+    StmtPtr parse_set();
+    StmtPtr parse_select_database();
+    StmtPtr parse_select_system_var();
 
     // SELECT clause parsing
     std::vector<ExprPtr> parse_select_list();
@@ -56,11 +64,11 @@ private:
     ExprPtr parse_multiplication();
     ExprPtr parse_unary();
     ExprPtr parse_primary();
-    ExprPtr parse_function_call(const std::string& name);
+    ExprPtr parse_function_call(const std::string & name);
 
     // Type parsing for CREATE TABLE
     ColumnDef parse_column_def();
-    neon::type::ValueType parse_data_type(int32_t& type_len);
+    neon::type::ValueType parse_data_type(int32_t & type_len);
 };
 
 } // namespace neon::parser

@@ -1,25 +1,27 @@
 #pragma once
 
-#include "src/type/value.h"
-#include "src/type/tuple.h"
-#include "src/base/error.h"
 #include <memory>
 #include <string>
+#include "src/base/error.h"
+#include "src/type/tuple.h"
+#include "src/type/value.h"
 
-namespace neon::expression {
+namespace neon::expression
+{
 
 using neon::base::Error;
-using neon::type::Value;
 using neon::type::Row;
+using neon::type::Value;
 
 // 表达式基类
-class Expression {
+class Expression
+{
 public:
     virtual ~Expression() = default;
-    
+
     // 计算表达式的值
-    virtual std::pair<bool, Value> evaluate(const Row& row) = 0;
-    
+    virtual std::pair<bool, Value> evaluate(const Row & row) = 0;
+
     // 获取表达式的类型
     virtual neon::type::ValueType get_type() const = 0;
 };
@@ -27,12 +29,13 @@ public:
 using ExpressionRef = std::shared_ptr<Expression>;
 
 // 字面量表达式
-class LiteralExpression : public Expression {
+class LiteralExpression : public Expression
+{
 public:
-    explicit LiteralExpression(const Value& value);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+    explicit LiteralExpression(const Value & value);
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 
 private:
@@ -40,12 +43,13 @@ private:
 };
 
 // 列引用表达式
-class ColumnExpression : public Expression {
+class ColumnExpression : public Expression
+{
 public:
     ColumnExpression(size_t column_index, neon::type::ValueType type);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 
 private:
@@ -54,10 +58,11 @@ private:
 };
 
 // 二元操作表达式基类
-class BinaryExpression : public Expression {
+class BinaryExpression : public Expression
+{
 public:
     BinaryExpression(ExpressionRef left, ExpressionRef right);
-    
+
     neon::type::ValueType get_type() const override;
 
 protected:
@@ -66,7 +71,8 @@ protected:
 };
 
 // 比较操作表达式
-enum class ComparisonType {
+enum class ComparisonType
+{
     EQUAL,
     NOT_EQUAL,
     LESS_THAN,
@@ -75,12 +81,13 @@ enum class ComparisonType {
     GREATER_EQUAL
 };
 
-class ComparisonExpression : public BinaryExpression {
+class ComparisonExpression : public BinaryExpression
+{
 public:
     ComparisonExpression(ComparisonType type, ExpressionRef left, ExpressionRef right);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 
 private:
@@ -88,19 +95,21 @@ private:
 };
 
 // 算术操作表达式
-enum class ArithmeticType {
+enum class ArithmeticType
+{
     ADD,
     SUBTRACT,
     MULTIPLY,
     DIVIDE
 };
 
-class ArithmeticExpression : public BinaryExpression {
+class ArithmeticExpression : public BinaryExpression
+{
 public:
     ArithmeticExpression(ArithmeticType type, ExpressionRef left, ExpressionRef right);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 
 private:
@@ -108,18 +117,20 @@ private:
 };
 
 // 逻辑操作表达式
-enum class LogicalType {
+enum class LogicalType
+{
     AND,
     OR,
     NOT
 };
 
-class LogicalExpression : public BinaryExpression {
+class LogicalExpression : public BinaryExpression
+{
 public:
     LogicalExpression(LogicalType type, ExpressionRef left, ExpressionRef right);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 
 private:
@@ -127,10 +138,11 @@ private:
 };
 
 // 一元操作表达式基类
-class UnaryExpression : public Expression {
+class UnaryExpression : public Expression
+{
 public:
     explicit UnaryExpression(ExpressionRef operand);
-    
+
     neon::type::ValueType get_type() const override;
 
 protected:
@@ -138,12 +150,13 @@ protected:
 };
 
 // 逻辑非表达式
-class NotExpression : public UnaryExpression {
+class NotExpression : public UnaryExpression
+{
 public:
     explicit NotExpression(ExpressionRef operand);
-    
-    std::pair<bool, Value> evaluate(const Row& row) override;
-    
+
+    std::pair<bool, Value> evaluate(const Row & row) override;
+
     neon::type::ValueType get_type() const override;
 };
 

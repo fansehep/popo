@@ -1,84 +1,113 @@
 #pragma once
-#include <string>
-#include <vector>
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 #include "parser/ast.h"
 #include "type/value.h"
 
-namespace neon::planner {
+namespace neon::planner
+{
 
-enum class PlanNodeType {
-    Scan, Filter, Project, Join, Agg, Sort, Limit,
-    Insert, Update, Delete, CreateTable, DropTable
+enum class PlanNodeType
+{
+    Scan,
+    Filter,
+    Project,
+    Join,
+    Agg,
+    Sort,
+    Limit,
+    Insert,
+    Update,
+    Delete,
+    CreateTable,
+    DropTable,
+    ShowTables,
+    Describe,
+    ShowDatabases,
+    SetVar,
+    ShowVariables,
+    ShowStatus,
+    SelectDatabase,
+    SelectSystemVar
 };
 
 struct PlanNode;
 using PlanNodePtr = std::shared_ptr<PlanNode>;
 
-struct PlanNode {
+struct PlanNode
+{
     PlanNodeType type;
     virtual ~PlanNode() = default;
 };
 
 // Table scan: read all rows from a table
-struct ScanNode : PlanNode {
+struct ScanNode : PlanNode
+{
     std::string table_name;
-    std::string alias;  // optional alias for the table
+    std::string alias; // optional alias for the table
     std::vector<std::string> column_names; // resolved column names
     std::vector<neon::type::ValueType> column_types; // resolved column types
     ScanNode() { type = PlanNodeType::Scan; }
 };
 
 // Filter: WHERE or HAVING condition
-struct FilterNode : PlanNode {
+struct FilterNode : PlanNode
+{
     PlanNodePtr child;
     neon::parser::ExprPtr condition;
     FilterNode() { type = PlanNodeType::Filter; }
 };
 
 // Project: SELECT column list
-struct ProjectNode : PlanNode {
+struct ProjectNode : PlanNode
+{
     PlanNodePtr child;
     std::vector<neon::parser::ExprPtr> expressions; // output expressions
-    std::vector<std::string> output_names;           // output column names/aliases
+    std::vector<std::string> output_names; // output column names/aliases
     ProjectNode() { type = PlanNodeType::Project; }
 };
 
 // Join two inputs
-struct JoinNode : PlanNode {
+struct JoinNode : PlanNode
+{
     neon::parser::JoinType join_type;
     PlanNodePtr left;
     PlanNodePtr right;
-    neon::parser::ExprPtr condition;  // ON condition
+    neon::parser::ExprPtr condition; // ON condition
     JoinNode() { type = PlanNodeType::Join; }
 };
 
 // Aggregation: GROUP BY + aggregate functions
-struct AggNode : PlanNode {
+struct AggNode : PlanNode
+{
     PlanNodePtr child;
-    std::vector<neon::parser::ExprPtr> group_by;      // GROUP BY expressions
-    std::vector<neon::parser::ExprPtr> agg_exprs;     // aggregate expressions (COUNT, SUM, etc.)
-    std::vector<std::string> output_names;             // output column names
+    std::vector<neon::parser::ExprPtr> group_by; // GROUP BY expressions
+    std::vector<neon::parser::ExprPtr> agg_exprs; // aggregate expressions (COUNT, SUM, etc.)
+    std::vector<std::string> output_names; // output column names
     AggNode() { type = PlanNodeType::Agg; }
 };
 
 // Sort: ORDER BY
-struct SortNode : PlanNode {
+struct SortNode : PlanNode
+{
     PlanNodePtr child;
     std::vector<neon::parser::OrderByItem> order_by;
     SortNode() { type = PlanNodeType::Sort; }
 };
 
 // Limit: LIMIT N
-struct LimitNode : PlanNode {
+struct LimitNode : PlanNode
+{
     PlanNodePtr child;
     int64_t limit_count;
     LimitNode() { type = PlanNodeType::Limit; }
 };
 
 // Insert rows into a table
-struct InsertNode : PlanNode {
+struct InsertNode : PlanNode
+{
     std::string table_name;
     std::vector<std::string> columns;
     std::vector<std::vector<neon::parser::ExprPtr>> values;
@@ -86,32 +115,86 @@ struct InsertNode : PlanNode {
 };
 
 // Update rows
-struct UpdateNode : PlanNode {
+struct UpdateNode : PlanNode
+{
     std::string table_name;
     std::vector<neon::parser::UpdateAssignment> assignments;
-    neon::parser::ExprPtr where_clause;  // optional
+    neon::parser::ExprPtr where_clause; // optional
     UpdateNode() { type = PlanNodeType::Update; }
 };
 
 // Delete rows
-struct DeleteNode : PlanNode {
+struct DeleteNode : PlanNode
+{
     std::string table_name;
-    neon::parser::ExprPtr where_clause;  // optional
+    neon::parser::ExprPtr where_clause; // optional
     DeleteNode() { type = PlanNodeType::Delete; }
 };
 
 // Create table DDL
-struct CreateTableNode : PlanNode {
+struct CreateTableNode : PlanNode
+{
     std::string table_name;
     std::vector<neon::parser::ColumnDef> columns;
     CreateTableNode() { type = PlanNodeType::CreateTable; }
 };
 
 // Drop table DDL
-struct DropTableNode : PlanNode {
+struct DropTableNode : PlanNode
+{
     std::string table_name;
     bool if_exists = false;
     DropTableNode() { type = PlanNodeType::DropTable; }
+};
+
+// Show tables
+struct ShowTablesNode : PlanNode
+{
+    ShowTablesNode() { type = PlanNodeType::ShowTables; }
+};
+
+// Describe table
+struct DescribeNode : PlanNode
+{
+    std::string table_name;
+    DescribeNode() { type = PlanNodeType::Describe; }
+};
+
+// Show databases
+struct ShowDatabasesNode : PlanNode
+{
+    ShowDatabasesNode() { type = PlanNodeType::ShowDatabases; }
+};
+
+// Set variable
+struct SetVarNode : PlanNode
+{
+    SetVarNode() { type = PlanNodeType::SetVar; }
+};
+
+// Show variables
+struct ShowVariablesNode : PlanNode
+{
+    ShowVariablesNode() { type = PlanNodeType::ShowVariables; }
+};
+
+// Show status
+struct ShowStatusNode : PlanNode
+{
+    ShowStatusNode() { type = PlanNodeType::ShowStatus; }
+};
+
+// SELECT DATABASE()
+struct SelectDatabaseNode : PlanNode
+{
+    SelectDatabaseNode() { type = PlanNodeType::SelectDatabase; }
+};
+
+// SELECT @@xxx
+struct SelectSystemVarNode : PlanNode
+{
+    std::string var_name;
+    SelectSystemVarNode() { type = PlanNodeType::SelectSystemVar; }
 };
 
 } // namespace neon::planner

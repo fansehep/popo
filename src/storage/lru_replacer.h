@@ -7,9 +7,11 @@
 #include <optional>
 #include <unordered_map>
 
-namespace neon::storage {
+namespace neon::storage
+{
 
-class LRUReplacer {
+class LRUReplacer
+{
 public:
     explicit LRUReplacer(size_t capacity);
 
@@ -37,4 +39,4 @@ private:
     mutable std::mutex mutex_;
 };
 
-}  // namespace neon::storage
+} // namespace neon::storage

@@ -1,15 +1,16 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 #include "src/catalog/column.h"
 
 
 namespace neon::catalog
 {
 
-struct SchemaIndex {
+struct SchemaIndex
+{
     // 索引名称
     std::string index_name_;
     // 索引列
@@ -22,7 +23,7 @@ struct SchemaIndex {
 using SchemaId = int32_t;
 
 struct Schema
-{ 
+{
     // 表的Id
     SchemaId id_;
     // 列的数量

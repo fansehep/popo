@@ -2,7 +2,8 @@
 #include <cstring>
 #include <filesystem>
 
-namespace neon::storage {
+namespace neon::storage
+{
 
 // ============================================================================
 // LogRecord serialization
@@ -16,30 +17,33 @@ namespace neon::storage {
 // [uint32_t new_data_len] [char[] new_data]
 // [uint32_t total_size]  // repeated at end for backward scanning
 
-uint32_t LogRecord::serialized_size() const {
+uint32_t LogRecord::serialized_size() const
+{
     uint32_t size = 0;
-    size += sizeof(uint32_t);   // total_size header
-    size += sizeof(lsn_t);      // lsn
-    size += sizeof(txn_id_t);   // txn_id
-    size += sizeof(uint8_t);    // type
-    size += sizeof(uint16_t);   // table_name_len
+    size += sizeof(uint32_t); // total_size header
+    size += sizeof(lsn_t); // lsn
+    size += sizeof(txn_id_t); // txn_id
+    size += sizeof(uint8_t); // type
+    size += sizeof(uint16_t); // table_name_len
     size += static_cast<uint32_t>(table_name.size());
-    size += sizeof(page_id_t);  // page_id
-    size += sizeof(slot_id_t);  // slot_id
-    size += sizeof(uint32_t);   // old_data_len
+    size += sizeof(page_id_t); // page_id
+    size += sizeof(slot_id_t); // slot_id
+    size += sizeof(uint32_t); // old_data_len
     size += static_cast<uint32_t>(old_data.size());
-    size += sizeof(uint32_t);   // new_data_len
+    size += sizeof(uint32_t); // new_data_len
     size += static_cast<uint32_t>(new_data.size());
-    size += sizeof(uint32_t);   // total_size trailer
+    size += sizeof(uint32_t); // total_size trailer
     return size;
 }
 
-std::vector<char> LogRecord::serialize() const {
+std::vector<char> LogRecord::serialize() const
+{
     uint32_t total = serialized_size();
     std::vector<char> buf(total);
-    char* ptr = buf.data();
+    char * ptr = buf.data();
 
-    auto write = [&](const void* src, size_t n) {
+    auto write = [&](const void * src, size_t n)
+    {
         std::memcpy(ptr, src, n);
         ptr += n;
     };
@@ -52,7 +56,8 @@ std::vector<char> LogRecord::serialize() const {
 
     auto name_len = static_cast<uint16_t>(table_name.size());
     write(&name_len, sizeof(uint16_t));
-    if (name_len > 0) {
+    if (name_len > 0)
+    {
         write(table_name.data(), name_len);
     }
 
@@ -61,26 +66,30 @@ std::vector<char> LogRecord::serialize() const {
 
     auto old_len = static_cast<uint32_t>(old_data.size());
     write(&old_len, sizeof(uint32_t));
-    if (old_len > 0) {
+    if (old_len > 0)
+    {
         write(old_data.data(), old_len);
     }
 
     auto new_len = static_cast<uint32_t>(new_data.size());
     write(&new_len, sizeof(uint32_t));
-    if (new_len > 0) {
+    if (new_len > 0)
+    {
         write(new_data.data(), new_len);
     }
 
-    write(&total, sizeof(uint32_t));  // trailer
+    write(&total, sizeof(uint32_t)); // trailer
 
     return buf;
 }
 
-LogRecord LogRecord::deserialize(const char* data, uint32_t len) {
+LogRecord LogRecord::deserialize(const char * data, uint32_t len)
+{
     LogRecord record;
-    const char* ptr = data;
+    const char * ptr = data;
 
-    auto read = [&](void* dst, size_t n) {
+    auto read = [&](void * dst, size_t n)
+    {
         std::memcpy(dst, ptr, n);
         ptr += n;
     };
@@ -96,7 +105,8 @@ LogRecord LogRecord::deserialize(const char* data, uint32_t len) {
 
     uint16_t name_len = 0;
     read(&name_len, sizeof(uint16_t));
-    if (name_len > 0) {
+    if (name_len > 0)
+    {
         record.table_name.assign(ptr, name_len);
         ptr += name_len;
     }
@@ -106,14 +116,16 @@ LogRecord LogRecord::deserialize(const char* data, uint32_t len) {
 
     uint32_t old_len = 0;
     read(&old_len, sizeof(uint32_t));
-    if (old_len > 0) {
+    if (old_len > 0)
+    {
         record.old_data.assign(ptr, ptr + old_len);
         ptr += old_len;
     }
 
     uint32_t new_len = 0;
     read(&new_len, sizeof(uint32_t));
-    if (new_len > 0) {
+    if (new_len > 0)
+    {
         record.new_data.assign(ptr, ptr + new_len);
         ptr += new_len;
     }
@@ -126,18 +138,22 @@ LogRecord LogRecord::deserialize(const char* data, uint32_t len) {
 // RedoLogManager
 // ============================================================================
 
-RedoLogManager::RedoLogManager(const std::string& log_file_path)
-    : log_file_path_(log_file_path) {
+RedoLogManager::RedoLogManager(const std::string & log_file_path) : log_file_path_(log_file_path)
+{
     // If log file already exists, scan for max LSN
-    if (std::filesystem::exists(log_file_path_)) {
+    if (std::filesystem::exists(log_file_path_))
+    {
         auto records = read_all_records();
         lsn_t max_lsn = 0;
-        for (const auto& rec : records) {
-            if (rec.lsn > max_lsn) {
+        for (const auto & rec : records)
+        {
+            if (rec.lsn > max_lsn)
+            {
                 max_lsn = rec.lsn;
             }
         }
-        if (max_lsn > 0) {
+        if (max_lsn > 0)
+        {
             next_lsn_ = max_lsn + 1;
             flushed_lsn_ = max_lsn;
         }
@@ -145,20 +161,25 @@ RedoLogManager::RedoLogManager(const std::string& log_file_path)
     open_log_file();
 }
 
-RedoLogManager::~RedoLogManager() {
-    if (!log_buffer_.empty()) {
+RedoLogManager::~RedoLogManager()
+{
+    if (!log_buffer_.empty())
+    {
         flush();
     }
-    if (log_file_.is_open()) {
+    if (log_file_.is_open())
+    {
         log_file_.close();
     }
 }
 
-void RedoLogManager::open_log_file() {
+void RedoLogManager::open_log_file()
+{
     log_file_.open(log_file_path_, std::ios::binary | std::ios::app);
 }
 
-lsn_t RedoLogManager::append(const LogRecord& record) {
+lsn_t RedoLogManager::append(const LogRecord & record)
+{
     std::lock_guard<std::mutex> lock(mutex_);
     LogRecord rec = record;
     rec.lsn = next_lsn_++;
@@ -167,9 +188,11 @@ lsn_t RedoLogManager::append(const LogRecord& record) {
     return rec.lsn;
 }
 
-void RedoLogManager::flush() {
+void RedoLogManager::flush()
+{
     std::lock_guard<std::mutex> lock(mutex_);
-    if (log_buffer_.empty()) {
+    if (log_buffer_.empty())
+    {
         return;
     }
     log_file_.write(log_buffer_.data(), static_cast<std::streamsize>(log_buffer_.size()));
@@ -179,25 +202,30 @@ void RedoLogManager::flush() {
     log_buffer_.clear();
 }
 
-void RedoLogManager::flush_to_lsn(lsn_t target_lsn) {
+void RedoLogManager::flush_to_lsn(lsn_t target_lsn)
+{
     // Only need to check outside lock; flush() acquires its own lock
-    if (target_lsn > flushed_lsn_) {
+    if (target_lsn > flushed_lsn_)
+    {
         flush();
     }
 }
 
-std::vector<LogRecord> RedoLogManager::read_all_records() {
+std::vector<LogRecord> RedoLogManager::read_all_records()
+{
     std::vector<LogRecord> records;
 
     std::ifstream in(log_file_path_, std::ios::binary);
-    if (!in.is_open()) {
+    if (!in.is_open())
+    {
         return records;
     }
 
     // Read entire file into memory
     in.seekg(0, std::ios::end);
     auto file_size = in.tellg();
-    if (file_size <= 0) {
+    if (file_size <= 0)
+    {
         return records;
     }
     in.seekg(0, std::ios::beg);
@@ -206,15 +234,17 @@ std::vector<LogRecord> RedoLogManager::read_all_records() {
     in.read(file_data.data(), file_size);
     in.close();
 
-    const char* ptr = file_data.data();
-    const char* end = ptr + file_data.size();
+    const char * ptr = file_data.data();
+    const char * end = ptr + file_data.size();
 
-    while (ptr + sizeof(uint32_t) <= end) {
+    while (ptr + sizeof(uint32_t) <= end)
+    {
         uint32_t total_size = 0;
         std::memcpy(&total_size, ptr, sizeof(uint32_t));
 
-        if (total_size == 0 || ptr + total_size > end) {
-            break;  // Corrupted or incomplete record
+        if (total_size == 0 || ptr + total_size > end)
+        {
+            break; // Corrupted or incomplete record
         }
 
         auto record = LogRecord::deserialize(ptr, total_size);
@@ -225,9 +255,11 @@ std::vector<LogRecord> RedoLogManager::read_all_records() {
     return records;
 }
 
-void RedoLogManager::truncate() {
+void RedoLogManager::truncate()
+{
     std::lock_guard<std::mutex> lock(mutex_);
-    if (log_file_.is_open()) {
+    if (log_file_.is_open())
+    {
         log_file_.close();
     }
     // Reopen in truncate mode
@@ -240,4 +272,4 @@ void RedoLogManager::truncate() {
     log_buffer_.clear();
 }
 
-}  // namespace neon::storage
+} // namespace neon::storage

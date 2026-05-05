@@ -1,22 +1,25 @@
 #include <gtest/gtest.h>
-#include "src/storage/row_serializer.h"
-#include "src/type/value.h"
-#include "src/type/tuple.h"
-#include "src/catalog/schema.h"
 #include "src/catalog/column.h"
+#include "src/catalog/schema.h"
+#include "src/storage/row_serializer.h"
+#include "src/type/tuple.h"
+#include "src/type/value.h"
 
 using namespace neon::storage;
 using namespace neon::type;
 using namespace neon::catalog;
 
-namespace {
+namespace
+{
 
-Schema make_schema(const std::vector<std::pair<std::string, ValueType>>& cols) {
+Schema make_schema(const std::vector<std::pair<std::string, ValueType>> & cols)
+{
     Schema schema;
     schema.id_ = 1;
     schema.table_name_ = "test_table";
     schema.primary_key_col_idx_ = 0;
-    for (auto& [name, type] : cols) {
+    for (auto & [name, type] : cols)
+    {
         Column col;
         col.column_name_ = name;
         col.data_type_ = type;
@@ -31,9 +34,12 @@ Schema make_schema(const std::vector<std::pair<std::string, ValueType>>& cols) {
 
 } // anonymous namespace
 
-class RowSerializerTest : public ::testing::Test {};
+class RowSerializerTest : public ::testing::Test
+{
+};
 
-TEST_F(RowSerializerTest, SerializeDeserializeIntegers) {
+TEST_F(RowSerializerTest, SerializeDeserializeIntegers)
+{
     auto schema = make_schema({{"id", ValueType::Int32}, {"big_id", ValueType::Int64}});
     Row row;
     row.append_value(Value(ValueType::Int32, int32_t(42)));
@@ -48,7 +54,8 @@ TEST_F(RowSerializerTest, SerializeDeserializeIntegers) {
     EXPECT_EQ(restored.values_[1].i64(), 123456789LL);
 }
 
-TEST_F(RowSerializerTest, SerializeDeserializeStrings) {
+TEST_F(RowSerializerTest, SerializeDeserializeStrings)
+{
     auto schema = make_schema({{"name", ValueType::String}, {"city", ValueType::String}});
     Row row;
     row.append_value(Value(ValueType::String, std::string("Alice")));
@@ -61,13 +68,10 @@ TEST_F(RowSerializerTest, SerializeDeserializeStrings) {
     EXPECT_EQ(restored.values_[1].string_ref(), "Beijing");
 }
 
-TEST_F(RowSerializerTest, SerializeDeserializeMixed) {
-    auto schema = make_schema({
-        {"id", ValueType::Int32},
-        {"name", ValueType::String},
-        {"score", ValueType::Float32},
-        {"active", ValueType::Bool}
-    });
+TEST_F(RowSerializerTest, SerializeDeserializeMixed)
+{
+    auto schema
+        = make_schema({{"id", ValueType::Int32}, {"name", ValueType::String}, {"score", ValueType::Float32}, {"active", ValueType::Bool}});
     Row row;
     row.append_value(Value(ValueType::Int32, int32_t(7)));
     row.append_value(Value(ValueType::String, std::string("Bob")));
@@ -83,16 +87,13 @@ TEST_F(RowSerializerTest, SerializeDeserializeMixed) {
     EXPECT_EQ(restored.values_[3].boolean(), true);
 }
 
-TEST_F(RowSerializerTest, SerializeDeserializeWithNulls) {
-    auto schema = make_schema({
-        {"id", ValueType::Int32},
-        {"name", ValueType::String},
-        {"age", ValueType::Int32}
-    });
+TEST_F(RowSerializerTest, SerializeDeserializeWithNulls)
+{
+    auto schema = make_schema({{"id", ValueType::Int32}, {"name", ValueType::String}, {"age", ValueType::Int32}});
     Row row;
     row.append_value(Value(ValueType::Int32, int32_t(1)));
-    row.append_value(Value());  // Null
-    row.append_value(Value());  // Null
+    row.append_value(Value()); // Null
+    row.append_value(Value()); // Null
 
     auto bytes = RowSerializer::serialize(row, schema);
     auto restored = RowSerializer::deserialize(bytes.data(), static_cast<uint32_t>(bytes.size()), schema);
@@ -102,7 +103,8 @@ TEST_F(RowSerializerTest, SerializeDeserializeWithNulls) {
     EXPECT_EQ(restored.values_[2].datatype(), ValueType::Null);
 }
 
-TEST_F(RowSerializerTest, SerializedSizeConsistency) {
+TEST_F(RowSerializerTest, SerializedSizeConsistency)
+{
     auto schema = make_schema({{"id", ValueType::Int32}, {"name", ValueType::String}});
     Row row;
     row.append_value(Value(ValueType::Int32, int32_t(99)));
@@ -113,7 +115,8 @@ TEST_F(RowSerializerTest, SerializedSizeConsistency) {
     EXPECT_EQ(predicted, static_cast<uint32_t>(bytes.size()));
 }
 
-TEST_F(RowSerializerTest, EmptyRow) {
+TEST_F(RowSerializerTest, EmptyRow)
+{
     auto schema = make_schema({});
     Row row;
 

@@ -1,46 +1,61 @@
 #include "src/storage/row_serializer.h"
-#include <cstring>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 
-namespace neon::storage {
+namespace neon::storage
+{
 
-using neon::type::ValueType;
-using neon::type::Value;
-using neon::type::Row;
 using neon::catalog::Schema;
+using neon::type::Row;
+using neon::type::Value;
+using neon::type::ValueType;
 
 // Helper: size of a fixed-type value in bytes
-static uint32_t fixed_type_size(ValueType type) {
-    switch (type) {
-        case ValueType::Bool:    return 1;
+static uint32_t fixed_type_size(ValueType type)
+{
+    switch (type)
+    {
+        case ValueType::Bool:
+            return 1;
         case ValueType::Int8:
         case ValueType::Uint8:
-        case ValueType::Char:    return 1;
+        case ValueType::Char:
+            return 1;
         case ValueType::Int16:
-        case ValueType::Uint16:  return 2;
+        case ValueType::Uint16:
+            return 2;
         case ValueType::Int32:
         case ValueType::Uint32:
-        case ValueType::Float32: return 4;
+        case ValueType::Float32:
+            return 4;
         case ValueType::Int64:
         case ValueType::Uint64:
-        case ValueType::Float64: return 8;
-        default:                 return 0;  // variable-length or null
+        case ValueType::Float64:
+            return 8;
+        default:
+            return 0; // variable-length or null
     }
 }
 
-uint32_t RowSerializer::serialized_size(const Row& row, const Schema& schema) {
+uint32_t RowSerializer::serialized_size(const Row & row, const Schema & schema)
+{
     uint16_t num_cols = static_cast<uint16_t>(schema.columns_.size());
     // Header: num_cols (2 bytes) + null bitmap
     uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
     uint32_t size = sizeof(uint16_t) + null_bitmap_bytes;
 
-    for (uint16_t i = 0; i < num_cols; ++i) {
-        if (i < row.values_.size() && row.values_[i].datatype() != ValueType::Null) {
+    for (uint16_t i = 0; i < num_cols; ++i)
+    {
+        if (i < row.values_.size() && row.values_[i].datatype() != ValueType::Null)
+        {
             ValueType type = schema.columns_[i].data_type_;
-            if (type == ValueType::String) {
+            if (type == ValueType::String)
+            {
                 size += sizeof(uint16_t) + static_cast<uint32_t>(row.values_[i].string_ref().size());
-            } else {
+            }
+            else
+            {
                 size += fixed_type_size(type);
             }
         }
@@ -49,7 +64,8 @@ uint32_t RowSerializer::serialized_size(const Row& row, const Schema& schema) {
     return size;
 }
 
-std::vector<char> RowSerializer::serialize(const Row& row, const Schema& schema) {
+std::vector<char> RowSerializer::serialize(const Row & row, const Schema & schema)
+{
     uint16_t num_cols = static_cast<uint16_t>(schema.columns_.size());
     uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
 
@@ -63,11 +79,13 @@ std::vector<char> RowSerializer::serialize(const Row& row, const Schema& schema)
 
     // Write null bitmap
     uint32_t bitmap_start = pos;
-    pos += null_bitmap_bytes;  // Skip bitmap area, fill it as we go
+    pos += null_bitmap_bytes; // Skip bitmap area, fill it as we go
 
-    for (uint16_t i = 0; i < num_cols; ++i) {
+    for (uint16_t i = 0; i < num_cols; ++i)
+    {
         bool is_null = (i >= row.values_.size()) || (row.values_[i].datatype() == ValueType::Null);
-        if (is_null) {
+        if (is_null)
+        {
             // Set bit i in null bitmap
             uint32_t byte_idx = i / 8;
             uint8_t bit_idx = i % 8;
@@ -75,10 +93,11 @@ std::vector<char> RowSerializer::serialize(const Row& row, const Schema& schema)
             continue;
         }
 
-        const Value& val = row.values_[i];
+        const Value & val = row.values_[i];
         ValueType type = schema.columns_[i].data_type_;
 
-        switch (type) {
+        switch (type)
+        {
             case ValueType::Bool: {
                 uint8_t v = val.boolean() ? 1 : 0;
                 std::memcpy(buf.data() + pos, &v, 1);
@@ -152,11 +171,12 @@ std::vector<char> RowSerializer::serialize(const Row& row, const Schema& schema)
                 break;
             }
             case ValueType::String: {
-                const std::string& s = val.string_ref();
+                const std::string & s = val.string_ref();
                 uint16_t str_len = static_cast<uint16_t>(s.size());
                 std::memcpy(buf.data() + pos, &str_len, sizeof(uint16_t));
                 pos += sizeof(uint16_t);
-                if (str_len > 0) {
+                if (str_len > 0)
+                {
                     std::memcpy(buf.data() + pos, s.data(), str_len);
                     pos += str_len;
                 }
@@ -169,11 +189,13 @@ std::vector<char> RowSerializer::serialize(const Row& row, const Schema& schema)
     return buf;
 }
 
-Row RowSerializer::deserialize(const char* data, uint32_t len, const Schema& schema) {
+Row RowSerializer::deserialize(const char * data, uint32_t len, const Schema & schema)
+{
     Row row;
     uint32_t pos = 0;
 
-    if (len < sizeof(uint16_t)) {
+    if (len < sizeof(uint16_t))
+    {
         return row;
     }
 
@@ -183,27 +205,31 @@ Row RowSerializer::deserialize(const char* data, uint32_t len, const Schema& sch
     pos += sizeof(uint16_t);
 
     uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
-    if (pos + null_bitmap_bytes > len) {
+    if (pos + null_bitmap_bytes > len)
+    {
         return row;
     }
 
-    const char* bitmap = data + pos;
+    const char * bitmap = data + pos;
     pos += null_bitmap_bytes;
 
-    for (uint16_t i = 0; i < num_cols && i < schema.columns_.size(); ++i) {
+    for (uint16_t i = 0; i < num_cols && i < schema.columns_.size(); ++i)
+    {
         // Check null bitmap
         uint32_t byte_idx = i / 8;
         uint8_t bit_idx = i % 8;
         bool is_null = (bitmap[byte_idx] >> bit_idx) & 1;
 
-        if (is_null) {
-            row.append_value(Value());  // Null value
+        if (is_null)
+        {
+            row.append_value(Value()); // Null value
             continue;
         }
 
         ValueType type = schema.columns_[i].data_type_;
 
-        switch (type) {
+        switch (type)
+        {
             case ValueType::Bool: {
                 uint8_t v = 0;
                 std::memcpy(&v, data + pos, 1);
@@ -298,11 +324,11 @@ Row RowSerializer::deserialize(const char* data, uint32_t len, const Schema& sch
                 break;
             }
             default:
-                row.append_value(Value());  // Unknown type -> null
+                row.append_value(Value()); // Unknown type -> null
                 break;
         }
     }
     return row;
 }
 
-}  // namespace neon::storage
+} // namespace neon::storage

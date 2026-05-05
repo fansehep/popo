@@ -34,10 +34,12 @@ class Value
 {
 public:
     Value() { type_ = ValueType::Null; }
-    
+
     // 拷贝构造函数
-    Value(const Value& other) : type_(other.type_) {
-        switch (type_) {
+    Value(const Value & other) : type_(other.type_)
+    {
+        switch (type_)
+        {
             case ValueType::String:
                 value_.str_val_ = new std::string(*other.value_.str_val_);
                 break;
@@ -46,17 +48,21 @@ public:
                 break;
         }
     }
-    
+
     // 赋值操作符
-    Value& operator=(const Value& other) {
-        if (this != &other) {
+    Value & operator=(const Value & other)
+    {
+        if (this != &other)
+        {
             // 先清理当前资源
-            if (type_ == ValueType::String) {
+            if (type_ == ValueType::String)
+            {
                 delete value_.str_val_;
             }
-            
+
             type_ = other.type_;
-            switch (type_) {
+            switch (type_)
+            {
                 case ValueType::String:
                     value_.str_val_ = new std::string(*other.value_.str_val_);
                     break;
@@ -190,8 +196,44 @@ public:
     [[nodiscard]] auto f64() const -> double { return value_.f64_val_; }
     [[nodiscard]] auto string_ref() const -> std::string & { return *value_.str_val_; }
 
+    // Convert any numeric type to double for cross-type comparison
+    [[nodiscard]] double to_f64() const
+    {
+        switch (type_)
+        {
+            case ValueType::Uint8:
+                return static_cast<double>(value_.u8_val_);
+            case ValueType::Uint16:
+                return static_cast<double>(value_.u16_val_);
+            case ValueType::Uint32:
+                return static_cast<double>(value_.u32_val_);
+            case ValueType::Uint64:
+                return static_cast<double>(value_.u64_val_);
+            case ValueType::Int8:
+                return static_cast<double>(value_.i8_val_);
+            case ValueType::Int16:
+                return static_cast<double>(value_.i16_val_);
+            case ValueType::Int32:
+                return static_cast<double>(value_.i32_val_);
+            case ValueType::Int64:
+                return static_cast<double>(value_.i64_val_);
+            case ValueType::Float32:
+                return static_cast<double>(value_.f32_val_);
+            case ValueType::Float64:
+                return value_.f64_val_;
+            case ValueType::Char:
+                return static_cast<double>(value_.u8_val_);
+            default:
+                return 0.0;
+        }
+    }
+
     friend bool operator<(const Value & lhs, const Value & rhs)
     {
+        if (lhs.is_numeric() && rhs.is_numeric())
+        {
+            return lhs.to_f64() < rhs.to_f64();
+        }
         ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
         switch (lhs.type_)
         {
@@ -229,6 +271,10 @@ public:
 
     friend bool operator>(const Value & lhs, const Value & rhs)
     {
+        if (lhs.is_numeric() && rhs.is_numeric())
+        {
+            return lhs.to_f64() > rhs.to_f64();
+        }
         ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
         switch (lhs.type_)
         {
@@ -266,6 +312,10 @@ public:
 
     friend bool operator==(const Value & lhs, const Value & rhs)
     {
+        if (lhs.is_numeric() && rhs.is_numeric())
+        {
+            return lhs.to_f64() == rhs.to_f64();
+        }
         ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
         switch (lhs.type_)
         {

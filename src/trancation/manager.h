@@ -3,6 +3,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <stdexcept>
 #include "src/storage/redo_log.h"
 #include "src/trancation/txn.h"
 
@@ -14,16 +15,15 @@ class TxnManager
 public:
     explicit TxnManager(neon::storage::RedoLogManager * redo_log);
 
-    // Begin a new transaction
+    // Begin the single active transaction. A second begin throws.
     Transaction * begin_txn();
 
     // Commit a transaction: log COMMIT, flush WAL
     void commit(Transaction * txn);
 
-    // Abort a transaction: undo write_set in reverse, log ABORT
-    // The undo_callback is called for each record that needs to be undone
-    using UndoCallback = std::function<void(const neon::storage::LogRecord &)>;
-    void abort(Transaction * txn, UndoCallback undo_fn = nullptr);
+    // Abort a transaction. Page rollback is done by StorageEngine; this only
+    // records the abort.
+    void abort(Transaction * txn);
 
     // Get a transaction by ID
     Transaction * get_txn(neon::storage::txn_id_t txn_id);

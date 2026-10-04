@@ -176,16 +176,73 @@ bool BufferPoolManager::flush_page(const std::string & table_name, page_id_t pag
 
 void BufferPoolManager::flush_all()
 {
-    std::lock_guard lock(latch_);
-
-    for (size_t i = 0; i < pool_size_; ++i)
+    bool own_txn = disk_manager_->begin_txn();
     {
-        FrameInfo & frame = frames_[i];
-        if (frame.is_dirty)
+        std::lock_guard lock(latch_);
+
+        std::vector<frame_id_t> todo;
+        todo.swap(dirty_);
+        for (size_t n = 0; n < todo.size(); ++n)
         {
-            disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data).value();
+            frame_id_t id = todo[n];
+            FrameInfo & frame = frames_[id];
+            if (!frame.is_dirty)
+            {
+                continue;
+            }
+            try
+            {
+                disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data).value();
+            }
+            catch (...)
+            {
+                dirty_.insert(dirty_.end(), todo.begin() + static_cast<std::ptrdiff_t>(n), todo.end());
+                throw;
+            }
             frame.is_dirty = false;
         }
+    }
+    if (own_txn)
+    {
+        disk_manager_->commit_txn();
+    }
+}
+
+void BufferPoolManager::drop_page(const std::string & table_name, page_id_t page_id)
+{
+    std::lock_guard lock(latch_);
+    PageKey key{table_name, page_id};
+    auto it = page_table_.find(key);
+    if (it == page_table_.end())
+    {
+        return;
+    }
+    frame_id_t fid = it->second;
+    FrameInfo & frame = frames_[fid];
+    if (frame.pin_count > 0)
+    {
+        return;
+    }
+    replacer_.pin(fid);
+    frame = FrameInfo{};
+    page_table_.erase(it);
+    free_list_.push_back(fid);
+}
+
+void BufferPoolManager::invalidate_all()
+{
+    std::lock_guard lock(latch_);
+    for (size_t i = 0; i < pool_size_; ++i)
+    {
+        replacer_.pin(static_cast<frame_id_t>(i));
+        frames_[i] = FrameInfo{};
+    }
+    page_table_.clear();
+    free_list_.clear();
+    dirty_.clear();
+    for (size_t i = 0; i < pool_size_; ++i)
+    {
+        free_list_.push_back(static_cast<frame_id_t>(i));
     }
 }
 
@@ -194,6 +251,10 @@ void BufferPoolManager::unpin(frame_id_t frame_id, bool is_dirty)
     std::lock_guard lock(latch_);
 
     FrameInfo & frame = frames_[frame_id];
+    if (is_dirty && !frame.is_dirty)
+    {
+        dirty_.push_back(frame_id);
+    }
     frame.is_dirty = frame.is_dirty || is_dirty;
 
     if (frame.pin_count <= 0)
@@ -225,7 +286,12 @@ page_id_t BufferPoolManager::get_frame_page_id(frame_id_t frame_id) const
 void BufferPoolManager::mark_frame_dirty(frame_id_t frame_id)
 {
     std::lock_guard lock(latch_);
-    frames_[frame_id].is_dirty = true;
+    FrameInfo & frame = frames_[frame_id];
+    if (!frame.is_dirty)
+    {
+        frame.is_dirty = true;
+        dirty_.push_back(frame_id);
+    }
 }
 
 std::optional<frame_id_t> BufferPoolManager::get_free_frame()

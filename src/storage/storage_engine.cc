@@ -1,8 +1,7 @@
 #include "src/storage/storage_engine.h"
 #include <filesystem>
-#include <set>
-#include <spdlog/spdlog.h>
-#include "src/storage/page.h"
+#include <stdexcept>
+#include "spdlog/spdlog.h"
 
 namespace neon::storage
 {
@@ -36,7 +35,23 @@ void StorageEngine::init()
 
 void StorageEngine::shutdown()
 {
-    if (buffer_pool_)
+    if (disk_manager_ && disk_manager_->in_txn())
+    {
+        disk_manager_->abort_txn();
+        if (buffer_pool_)
+        {
+            buffer_pool_->invalidate_all();
+        }
+        for (const auto & [name, root] : root_snap_)
+        {
+            if (auto it = table_heaps_.find(name); it != table_heaps_.end())
+            {
+                it->second->set_root_page_id(root);
+            }
+        }
+        root_snap_.clear();
+    }
+    else if (buffer_pool_)
     {
         flush_all();
     }
@@ -53,100 +68,9 @@ void StorageEngine::shutdown()
 
 void StorageEngine::recover()
 {
-    if (!redo_log_)
-    {
-        return;
-    }
-
-    auto records = redo_log_->read_all_records();
-    if (records.empty())
-    {
-        return;
-    }
-
-    spdlog::info("StorageEngine::recover: replaying {} log records", records.size());
-
-    // First pass: identify committed transactions
-    std::set<txn_id_t> committed_txns;
-    std::set<txn_id_t> aborted_txns;
-    for (const auto & rec : records)
-    {
-        if (rec.type == LogType::COMMIT)
-        {
-            committed_txns.insert(rec.txn_id);
-        }
-        else if (rec.type == LogType::ABORT)
-        {
-            aborted_txns.insert(rec.txn_id);
-        }
-    }
-
-    // Second pass: redo committed transactions
-    for (const auto & rec : records)
-    {
-        if (committed_txns.find(rec.txn_id) == committed_txns.end())
-        {
-            continue; // Skip uncommitted txn records
-        }
-
-        if (rec.type == LogType::INSERT)
-        {
-            // Ensure table file exists
-            if (!disk_manager_->table_file_exists(rec.table_name))
-            {
-                continue;
-            }
-            auto guard = buffer_pool_->fetch_page(rec.table_name, rec.page_id);
-            if (!guard.is_valid())
-            {
-                continue;
-            }
-            auto * page = reinterpret_cast<DataPage *>(guard.data());
-            page->insert_tuple(rec.new_data.data(), static_cast<uint16_t>(rec.new_data.size()));
-            page->header()->lsn = rec.lsn;
-            guard.mark_dirty();
-        }
-        else if (rec.type == LogType::DELETE)
-        {
-            if (!disk_manager_->table_file_exists(rec.table_name))
-            {
-                continue;
-            }
-            auto guard = buffer_pool_->fetch_page(rec.table_name, rec.page_id);
-            if (!guard.is_valid())
-            {
-                continue;
-            }
-            auto * page = reinterpret_cast<DataPage *>(guard.data());
-            page->delete_tuple(rec.slot_id);
-            page->header()->lsn = rec.lsn;
-            guard.mark_dirty();
-        }
-        else if (rec.type == LogType::UPDATE)
-        {
-            if (!disk_manager_->table_file_exists(rec.table_name))
-            {
-                continue;
-            }
-            auto guard = buffer_pool_->fetch_page(rec.table_name, rec.page_id);
-            if (!guard.is_valid())
-            {
-                continue;
-            }
-            auto * page = reinterpret_cast<DataPage *>(guard.data());
-            // Delete old, insert new
-            page->delete_tuple(rec.slot_id);
-            page->insert_tuple(rec.new_data.data(), static_cast<uint16_t>(rec.new_data.size()));
-            page->header()->lsn = rec.lsn;
-            guard.mark_dirty();
-        }
-    }
-
-    // Flush all recovered pages and truncate log
-    flush_all();
-    redo_log_->truncate();
-
-    spdlog::info("StorageEngine::recover: recovery complete");
+    // Committed page images are already visible from the block headers.
+    // Uncommitted generations are ignored. There is no row undo/redo replay.
+    spdlog::info("StorageEngine::recover: using committed page generations in {}", data_dir_);
 }
 
 TableHeap * StorageEngine::get_table_heap(const std::string & table_name)
@@ -196,16 +120,63 @@ bool StorageEngine::table_exists(const std::string & table_name) const
 
 neon::txn::Transaction * StorageEngine::begin_txn()
 {
-    return txn_mgr_->begin_txn();
+    if (!disk_manager_->begin_txn())
+    {
+        throw std::runtime_error("only one transaction is supported");
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        root_snap_.clear();
+        for (const auto & [name, heap] : table_heaps_)
+        {
+            root_snap_[name] = heap->get_root_page_id();
+        }
+    }
+    try
+    {
+        return txn_mgr_->begin_txn();
+    }
+    catch (...)
+    {
+        disk_manager_->abort_txn();
+        std::lock_guard<std::mutex> lock(mutex_);
+        root_snap_.clear();
+        throw;
+    }
 }
 
 void StorageEngine::commit_txn(neon::txn::Transaction * txn)
 {
+    flush_all();
+    disk_manager_->commit_txn();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        root_snap_.clear();
+    }
     txn_mgr_->commit(txn);
 }
 
 void StorageEngine::abort_txn(neon::txn::Transaction * txn)
 {
+    if (disk_manager_)
+    {
+        disk_manager_->abort_txn();
+    }
+    if (buffer_pool_)
+    {
+        buffer_pool_->invalidate_all();
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto & [name, root] : root_snap_)
+        {
+            if (auto it = table_heaps_.find(name); it != table_heaps_.end())
+            {
+                it->second->set_root_page_id(root);
+            }
+        }
+        root_snap_.clear();
+    }
     txn_mgr_->abort(txn);
 }
 

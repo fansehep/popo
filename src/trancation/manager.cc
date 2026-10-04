@@ -9,6 +9,15 @@ TxnManager::TxnManager(neon::storage::RedoLogManager * redo_log) : redo_log_(red
 
 Transaction * TxnManager::begin_txn()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto & entry : active_txns_)
+    {
+        if (entry.second->is_running())
+        {
+            throw std::runtime_error("only one transaction is supported");
+        }
+    }
+
     auto txn_id = next_txn_id_.fetch_add(1);
     auto txn = std::make_unique<Transaction>(txn_id);
 
@@ -20,10 +29,7 @@ Transaction * TxnManager::begin_txn()
     txn->set_start_lsn(lsn);
 
     Transaction * raw_ptr = txn.get();
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        active_txns_.emplace(txn_id, std::move(txn));
-    }
+    active_txns_.emplace(txn_id, std::move(txn));
     return raw_ptr;
 }
 
@@ -41,18 +47,8 @@ void TxnManager::commit(Transaction * txn)
     txn->set_state(TxnState::COMMITTED);
 }
 
-void TxnManager::abort(Transaction * txn, UndoCallback undo_fn)
+void TxnManager::abort(Transaction * txn)
 {
-    // Undo write set in reverse order
-    const auto & write_set = txn->write_set();
-    for (auto it = write_set.rbegin(); it != write_set.rend(); ++it)
-    {
-        if (undo_fn)
-        {
-            undo_fn(*it);
-        }
-    }
-
     // Log ABORT record
     neon::storage::LogRecord abort_record;
     abort_record.txn_id = txn->txn_id();

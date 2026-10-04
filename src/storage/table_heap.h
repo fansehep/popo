@@ -10,8 +10,7 @@
 #include "src/storage/common.h"
 #include "src/storage/page.h"
 #include "src/storage/redo_log.h"
-#include "src/storage/row_serializer.h"
-#include "src/storage/undo_space.h"
+#include "src/storage/tuple.h"
 #include "src/trancation/txn.h"
 #include "src/type/tuple.h"
 #include "src/type/value.h"
@@ -37,7 +36,10 @@ public:
     // Is iterator pointing to a valid tuple?
     bool valid() const;
 
-    // Get current row (deserialized)
+    // Physical tuple at the current slot. Deform with schema() when a Value is needed.
+    Tuple current_tuple() const;
+
+    // Deformed view of current_tuple(), for the executor.
     neon::type::Row current_row() const;
 
     // Get current RowId
@@ -64,17 +66,17 @@ public:
     TableHeap(
         const std::string & table_name, BufferPoolManager * buffer_pool, RedoLogManager * redo_log, const neon::catalog::Schema & schema);
 
-    // Insert a row into the B+Tree, returns RowId. Writes redo log.
-    RowId insert_row(neon::txn::Transaction * txn, const neon::type::Row & row);
+    // Insert a physical tuple into the B+Tree, returns RowId. Writes redo log.
+    RowId insert_row(neon::txn::Transaction * txn, const Tuple & tuple);
 
     // Delete a row by RowId. Writes redo log.
     bool delete_row(neon::txn::Transaction * txn, RowId rid);
 
     // Update a row by RowId. Writes redo log.
-    RowId update_row(neon::txn::Transaction * txn, RowId rid, const neon::type::Row & new_row);
+    RowId update_row(neon::txn::Transaction * txn, RowId rid, const Tuple & tuple);
 
-    // Get a single row by RowId
-    std::optional<neon::type::Row> get_row(RowId rid) const;
+    // Get the physical tuple at RowId.
+    std::optional<Tuple> get_row(RowId rid) const;
 
     // Look up a row by primary key value using B+Tree search.
     // Returns RowId of the matching row, or nullopt if not found.
@@ -92,12 +94,9 @@ public:
     // Get buffer pool
     BufferPoolManager * buffer_pool() const { return buffer_pool_; }
 
-    // Set undo space for transaction rollback support
-    void set_undo_space(UndoSpace * undo_space) { undo_space_ = undo_space; }
-    UndoSpace * undo_space() const { return undo_space_; }
-
     // Get B+Tree root page id (for testing/debugging)
     page_id_t get_root_page_id() const { return root_page_id_; }
+    void set_root_page_id(page_id_t pid) { root_page_id_ = pid; }
 
 private:
     std::string table_name_;
@@ -107,10 +106,9 @@ private:
     mutable std::mutex mutex_;
 
     page_id_t root_page_id_ = INVALID_PAGE_ID; // B+Tree root page
-    UndoSpace * undo_space_ = nullptr; // Undo space for rollback
 
     // --- PK helpers ---
-    neon::type::Value extract_pk(const neon::type::Row & row) const;
+    neon::type::Value extract_pk(const Tuple & tuple) const;
     neon::type::Value extract_pk_from_serialized(const char * data, uint16_t len) const;
     int compare_pk(const neon::type::Value & a, const neon::type::Value & b) const;
 

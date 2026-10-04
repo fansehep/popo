@@ -49,6 +49,12 @@ public:
         }
     }
 
+    // 移动构造函数 — no allocation, just steal the pointer
+    Value(Value && other) noexcept : type_(other.type_), value_(other.value_)
+    {
+        other.type_ = ValueType::Null;
+    }
+
     // 赋值操作符
     Value & operator=(const Value & other)
     {
@@ -74,12 +80,47 @@ public:
         return *this;
     }
 
+    // 移动赋值操作符 — steal and leave source in null state
+    Value & operator=(Value && other) noexcept
+    {
+        if (this != &other)
+        {
+            if (type_ == ValueType::String)
+            {
+                delete value_.str_val_;
+            }
+            type_ = other.type_;
+            value_ = other.value_;
+            other.type_ = ValueType::Null;
+        }
+        return *this;
+    }
+
     static bool is_type_equal(const Value & a, const Value & b) { return a.type_ == b.type_; }
     /**
-     * @brief 判断Value是否是数值类型
+     * @brief 判断Value是否是数值类型（constexpr 查找表，单次内存读取）
      * @return
      */
-    bool is_numeric() const noexcept;
+    bool is_numeric() const noexcept
+    {
+        static constexpr bool kIsNumeric[] = {
+            false, // Null    = 0
+            true,  // Uint8   = 1
+            true,  // Uint16  = 2
+            true,  // Uint32  = 3
+            true,  // Uint64  = 4
+            true,  // Int8    = 5
+            true,  // Int16   = 6
+            true,  // Int32   = 7
+            true,  // Int64   = 8
+            true,  // Float32 = 9
+            true,  // Float64 = 10
+            false, // String  = 11
+            false, // Bool    = 12
+            false, // Char    = 13
+        };
+        return kIsNumeric[static_cast<uint8_t>(type_)];
+    }
 
     [[nodiscard]] ValueType datatype() const { return type_; }
 
@@ -230,125 +271,99 @@ public:
 
     friend bool operator<(const Value & lhs, const Value & rhs)
     {
+        // Fast path: same type — compare union members directly, no to_f64() conversion
+        if (lhs.type_ == rhs.type_)
+        {
+            switch (lhs.type_)
+            {
+                case ValueType::Uint8:   return lhs.value_.u8_val_  < rhs.value_.u8_val_;
+                case ValueType::Uint16:  return lhs.value_.u16_val_ < rhs.value_.u16_val_;
+                case ValueType::Uint32:  return lhs.value_.u32_val_ < rhs.value_.u32_val_;
+                case ValueType::Uint64:  return lhs.value_.u64_val_ < rhs.value_.u64_val_;
+                case ValueType::Int8:    return lhs.value_.i8_val_  < rhs.value_.i8_val_;
+                case ValueType::Int16:   return lhs.value_.i16_val_ < rhs.value_.i16_val_;
+                case ValueType::Int32:   return lhs.value_.i32_val_ < rhs.value_.i32_val_;
+                case ValueType::Int64:   return lhs.value_.i64_val_ < rhs.value_.i64_val_;
+                case ValueType::Float32: return lhs.value_.f32_val_ < rhs.value_.f32_val_;
+                case ValueType::Float64: return lhs.value_.f64_val_ < rhs.value_.f64_val_;
+                case ValueType::Bool:    return lhs.value_.bool_val_ < rhs.value_.bool_val_;
+                case ValueType::Char:    return lhs.value_.u8_val_  < rhs.value_.u8_val_;
+                case ValueType::String:  return lhs.string_ref() < rhs.string_ref();
+                case ValueType::Null:    return false;
+                default: PANIC("Unsupported type for comparison"); return false;
+            }
+        }
+        // Cross-type numeric comparison (rare path)
         if (lhs.is_numeric() && rhs.is_numeric())
         {
             return lhs.to_f64() < rhs.to_f64();
         }
-        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
-        switch (lhs.type_)
-        {
-            case ValueType::Uint8:
-                return lhs.u8() < rhs.u8();
-            case ValueType::Uint16:
-                return lhs.u16() < rhs.u16();
-            case ValueType::Uint32:
-                return lhs.u32() < rhs.u32();
-            case ValueType::Uint64:
-                return lhs.u64() < rhs.u64();
-            case ValueType::Int8:
-                return lhs.i8() < rhs.i8();
-            case ValueType::Int16:
-                return lhs.i16() < rhs.i16();
-            case ValueType::Int32:
-                return lhs.i32() < rhs.i32();
-            case ValueType::Int64:
-                return lhs.i64() < rhs.i64();
-            case ValueType::Float32:
-                return lhs.f32() < rhs.f32();
-            case ValueType::Float64:
-                return lhs.f64() < rhs.f64();
-            case ValueType::Bool:
-                return lhs.boolean() < rhs.boolean();
-            case ValueType::Char:
-                return lhs.u8() < rhs.u8();
-            case ValueType::String:
-                return lhs.string_ref() < rhs.string_ref();
-            default:
-                PANIC("Unsupported type for comparison");
-                return false;
-        }
+        PANIC("Cannot compare different types");
+        return false;
     }
 
     friend bool operator>(const Value & lhs, const Value & rhs)
     {
+        // Fast path: same type
+        if (lhs.type_ == rhs.type_)
+        {
+            switch (lhs.type_)
+            {
+                case ValueType::Uint8:   return lhs.value_.u8_val_  > rhs.value_.u8_val_;
+                case ValueType::Uint16:  return lhs.value_.u16_val_ > rhs.value_.u16_val_;
+                case ValueType::Uint32:  return lhs.value_.u32_val_ > rhs.value_.u32_val_;
+                case ValueType::Uint64:  return lhs.value_.u64_val_ > rhs.value_.u64_val_;
+                case ValueType::Int8:    return lhs.value_.i8_val_  > rhs.value_.i8_val_;
+                case ValueType::Int16:   return lhs.value_.i16_val_ > rhs.value_.i16_val_;
+                case ValueType::Int32:   return lhs.value_.i32_val_ > rhs.value_.i32_val_;
+                case ValueType::Int64:   return lhs.value_.i64_val_ > rhs.value_.i64_val_;
+                case ValueType::Float32: return lhs.value_.f32_val_ > rhs.value_.f32_val_;
+                case ValueType::Float64: return lhs.value_.f64_val_ > rhs.value_.f64_val_;
+                case ValueType::Bool:    return lhs.value_.bool_val_ > rhs.value_.bool_val_;
+                case ValueType::Char:    return lhs.value_.u8_val_  > rhs.value_.u8_val_;
+                case ValueType::String:  return lhs.string_ref() > rhs.string_ref();
+                case ValueType::Null:    return false;
+                default: PANIC("Unsupported type for comparison"); return false;
+            }
+        }
         if (lhs.is_numeric() && rhs.is_numeric())
         {
             return lhs.to_f64() > rhs.to_f64();
         }
-        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
-        switch (lhs.type_)
-        {
-            case ValueType::Uint8:
-                return lhs.u8() > rhs.u8();
-            case ValueType::Uint16:
-                return lhs.u16() > rhs.u16();
-            case ValueType::Uint32:
-                return lhs.u32() > rhs.u32();
-            case ValueType::Uint64:
-                return lhs.u64() > rhs.u64();
-            case ValueType::Int8:
-                return lhs.i8() > rhs.i8();
-            case ValueType::Int16:
-                return lhs.i16() > rhs.i16();
-            case ValueType::Int32:
-                return lhs.i32() > rhs.i32();
-            case ValueType::Int64:
-                return lhs.i64() > rhs.i64();
-            case ValueType::Float32:
-                return lhs.f32() > rhs.f32();
-            case ValueType::Float64:
-                return lhs.f64() > rhs.f64();
-            case ValueType::Bool:
-                return lhs.boolean() > rhs.boolean();
-            case ValueType::Char:
-                return lhs.u8() > rhs.u8();
-            case ValueType::String:
-                return lhs.string_ref() > rhs.string_ref();
-            default:
-                PANIC("Unsupported type for comparison");
-                return false;
-        }
+        PANIC("Cannot compare different types");
+        return false;
     }
 
     friend bool operator==(const Value & lhs, const Value & rhs)
     {
+        // Fast path: same type
+        if (lhs.type_ == rhs.type_)
+        {
+            switch (lhs.type_)
+            {
+                case ValueType::Uint8:   return lhs.value_.u8_val_  == rhs.value_.u8_val_;
+                case ValueType::Uint16:  return lhs.value_.u16_val_ == rhs.value_.u16_val_;
+                case ValueType::Uint32:  return lhs.value_.u32_val_ == rhs.value_.u32_val_;
+                case ValueType::Uint64:  return lhs.value_.u64_val_ == rhs.value_.u64_val_;
+                case ValueType::Int8:    return lhs.value_.i8_val_  == rhs.value_.i8_val_;
+                case ValueType::Int16:   return lhs.value_.i16_val_ == rhs.value_.i16_val_;
+                case ValueType::Int32:   return lhs.value_.i32_val_ == rhs.value_.i32_val_;
+                case ValueType::Int64:   return lhs.value_.i64_val_ == rhs.value_.i64_val_;
+                case ValueType::Float32: return lhs.value_.f32_val_ == rhs.value_.f32_val_;
+                case ValueType::Float64: return lhs.value_.f64_val_ == rhs.value_.f64_val_;
+                case ValueType::Bool:    return lhs.value_.bool_val_ == rhs.value_.bool_val_;
+                case ValueType::Char:    return lhs.value_.u8_val_  == rhs.value_.u8_val_;
+                case ValueType::String:  return lhs.string_ref() == rhs.string_ref();
+                case ValueType::Null:    return true;
+                default: PANIC("Unsupported type for comparison"); return false;
+            }
+        }
         if (lhs.is_numeric() && rhs.is_numeric())
         {
             return lhs.to_f64() == rhs.to_f64();
         }
-        ASSERT(lhs.type_ == rhs.type_, "Cannot compare different types");
-        switch (lhs.type_)
-        {
-            case ValueType::Uint8:
-                return lhs.u8() == rhs.u8();
-            case ValueType::Uint16:
-                return lhs.u16() == rhs.u16();
-            case ValueType::Uint32:
-                return lhs.u32() == rhs.u32();
-            case ValueType::Uint64:
-                return lhs.u64() == rhs.u64();
-            case ValueType::Int8:
-                return lhs.i8() == rhs.i8();
-            case ValueType::Int16:
-                return lhs.i16() == rhs.i16();
-            case ValueType::Int32:
-                return lhs.i32() == rhs.i32();
-            case ValueType::Int64:
-                return lhs.i64() == rhs.i64();
-            case ValueType::Float32:
-                return lhs.f32() == rhs.f32();
-            case ValueType::Float64:
-                return lhs.f64() == rhs.f64();
-            case ValueType::Bool:
-                return lhs.boolean() == rhs.boolean();
-            case ValueType::Char:
-                return lhs.u8() == rhs.u8();
-            case ValueType::String:
-                return lhs.string_ref() == rhs.string_ref();
-            default:
-                PANIC("Unsupported type for comparison");
-                return false;
-        }
+        PANIC("Cannot compare different types");
+        return false;
     }
 
     [[nodiscard]] std::string to_val_string() const

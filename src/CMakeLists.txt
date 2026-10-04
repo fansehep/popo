@@ -112,6 +112,7 @@ target_include_directories(bytecode_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 # Storage library (includes transaction manager)
 add_library(storage_lib
     storage/disk_manager.cc
+    storage/io_ring.cc
     storage/row_serializer.cc
     storage/lru_replacer.cc
     storage/buffer_pool.cc
@@ -121,7 +122,7 @@ add_library(storage_lib
     trancation/manager.cc
 )
 target_include_directories(storage_lib PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog)
+target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog zstd)
 
 # Add server library
 add_library(server_lib

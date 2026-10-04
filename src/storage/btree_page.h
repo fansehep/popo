@@ -251,6 +251,26 @@ public:
         return {promoted_key, new_page_id};
     }
 
+    // Point a child pointer from old_pid to new_pid. Returns false if old_pid is absent.
+    bool replace_child(page_id_t old_pid, page_id_t new_pid)
+    {
+        uint16_t kc = key_count();
+        for (uint16_t i = 0; i < kc; ++i)
+        {
+            if (entry_at(i)->child == old_pid)
+            {
+                entry_at(i)->child = new_pid;
+                return true;
+            }
+        }
+        if (rightmost_child() == old_pid)
+        {
+            set_rightmost_child(new_pid);
+            return true;
+        }
+        return false;
+    }
+
     // Write page_id into header (used after allocating a page for split)
     void set_page_id(page_id_t pid) { header()->page_id = pid; }
 

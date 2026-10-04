@@ -16,6 +16,8 @@ struct Row
     [[nodiscard]] std::string to_string() const
     {
         std::string res;
+        // Estimate: ~8 bytes per value + 1 comma per separator
+        res.reserve(values_.size() * 9);
         for (size_t i = 0; i < values_.size(); ++i)
         {
             std::format_to(std::back_inserter(res), "{}", values_[i].to_val_string());
@@ -30,12 +32,20 @@ struct Row
     [[nodiscard]] auto len() const -> uint32_t { return values_.size(); }
 
     auto value_ref(const uint32_t idx) -> neon::type::Value & { return values_[idx]; }
+    [[nodiscard]] auto value_ref(const uint32_t idx) const -> const neon::type::Value & { return values_[idx]; }
 
     auto append_value(const neon::type::Value & value) -> void { values_.push_back(value); }
+    auto append_value(neon::type::Value && value) -> void { values_.push_back(std::move(value)); }
+
+    auto reserve_values(size_t n) -> void { values_.reserve(n); }
 
     std::vector<neon::type::Value> values_;
 
     Row() = default;
+    Row(const Row &) = default;
+    Row & operator=(const Row &) = default;
+    Row(Row &&) noexcept = default;
+    Row & operator=(Row &&) noexcept = default;
 };
 
 using RowRef = std::shared_ptr<Row>;

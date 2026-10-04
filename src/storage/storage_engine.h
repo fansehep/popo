@@ -49,6 +49,7 @@ public:
 private:
     std::string data_dir_;
     size_t buffer_pool_size_;
+    std::unordered_map<std::string, page_id_t> root_snap_;
 
     std::unique_ptr<DiskManager> disk_manager_;
     std::unique_ptr<BufferPoolManager> buffer_pool_;

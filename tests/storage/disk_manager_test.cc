@@ -99,3 +99,92 @@ TEST_F(DiskManagerTest, RemoveTableFile)
     dm->remove_table_file("t1");
     EXPECT_FALSE(dm->table_file_exists("t1"));
 }
+
+TEST_F(DiskManagerTest, RewriteKeepsLatestAndReopens)
+{
+    dm->create_table_file("t1").value();
+    page_id_t pid = dm->allocate_page("t1").value();
+
+    char first[PAGE_SIZE];
+    char second[PAGE_SIZE];
+    std::memset(first, 0, PAGE_SIZE);
+    std::memset(second, 0, PAGE_SIZE);
+    std::memcpy(first, "v1", 2);
+    std::memcpy(second, "v2", 2);
+    dm->write_page("t1", pid, first).value();
+    dm->write_page("t1", pid, second).value();
+
+    char read_buf[PAGE_SIZE];
+    dm->read_page("t1", pid, read_buf).value();
+    EXPECT_EQ(std::memcmp(second, read_buf, PAGE_SIZE), 0);
+
+    dm.reset();
+    dm = std::make_unique<DiskManager>(test_dir);
+    std::memset(read_buf, 0, PAGE_SIZE);
+    dm->read_page("t1", pid, read_buf).value();
+    EXPECT_EQ(std::memcmp(second, read_buf, PAGE_SIZE), 0);
+}
+
+TEST_F(DiskManagerTest, SingleTransactionAbortAndCommit)
+{
+    dm->create_table_file("t1").value();
+    page_id_t pid = dm->allocate_page("t1").value();
+
+    char committed[PAGE_SIZE];
+    char pending[PAGE_SIZE];
+    std::memset(committed, 0, PAGE_SIZE);
+    std::memset(pending, 0, PAGE_SIZE);
+    std::memcpy(committed, "committed", 9);
+    std::memcpy(pending, "pending", 7);
+    dm->write_page("t1", pid, committed).value();
+
+    EXPECT_TRUE(dm->begin_txn());
+    dm->write_page("t1", pid, pending).value();
+    char during[PAGE_SIZE];
+    dm->read_page("t1", pid, during).value();
+    EXPECT_EQ(std::memcmp(pending, during, PAGE_SIZE), 0);
+    dm->abort_txn();
+
+    char after_abort[PAGE_SIZE];
+    dm->read_page("t1", pid, after_abort).value();
+    EXPECT_EQ(std::memcmp(committed, after_abort, PAGE_SIZE), 0);
+
+    EXPECT_TRUE(dm->begin_txn());
+    dm->write_page("t1", pid, pending).value();
+    dm->commit_txn();
+    char after_commit[PAGE_SIZE];
+    dm->read_page("t1", pid, after_commit).value();
+    EXPECT_EQ(std::memcmp(pending, after_commit, PAGE_SIZE), 0);
+
+    dm.reset();
+    dm = std::make_unique<DiskManager>(test_dir);
+    std::memset(after_commit, 0, PAGE_SIZE);
+    dm->read_page("t1", pid, after_commit).value();
+    EXPECT_EQ(std::memcmp(pending, after_commit, PAGE_SIZE), 0);
+}
+
+TEST_F(DiskManagerTest, GcReusesBlocks)
+{
+    dm->create_table_file("t1").value();
+    page_id_t pid = dm->allocate_page("t1").value();
+
+    std::mt19937 rng(1);
+    char buf[PAGE_SIZE];
+    constexpr int kWrites = 80;
+    for (int i = 0; i < kWrites; ++i)
+    {
+        for (int j = 0; j < PAGE_SIZE; ++j)
+        {
+            buf[j] = static_cast<char>(rng());
+        }
+        buf[0] = static_cast<char>(i);
+        dm->write_page("t1", pid, buf).value();
+    }
+
+    auto size_after = fs::file_size(test_dir + "/t1.ndb");
+    EXPECT_LT(size_after, static_cast<uintmax_t>(4) * BLOCK_SIZE);
+
+    char read_buf[PAGE_SIZE];
+    dm->read_page("t1", pid, read_buf).value();
+    EXPECT_EQ(std::memcmp(buf, read_buf, PAGE_SIZE), 0);
+}

@@ -29,10 +29,6 @@ add_executable(btree_page_test btree_page_test.cc)
 target_link_libraries(btree_page_test PRIVATE storage_lib type_lib catalog_lib base_lib gtest gtest_main spdlog)
 gtest_discover_tests(btree_page_test)
 
-add_executable(undo_page_test undo_page_test.cc)
-target_link_libraries(undo_page_test PRIVATE storage_lib type_lib catalog_lib base_lib gtest gtest_main spdlog)
-gtest_discover_tests(undo_page_test)
-
 add_executable(stress_test stress_test.cc)
 target_link_libraries(stress_test PRIVATE storage_lib type_lib catalog_lib base_lib gtest gtest_main spdlog)
 gtest_discover_tests(stress_test)

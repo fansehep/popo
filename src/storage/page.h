@@ -12,10 +12,8 @@ enum class PageType : uint16_t
 {
     INVALID = 0,
     DATA_PAGE = 1,
-    META_PAGE = 2,
     BPTREE_INTERNAL_PAGE = 3, // B+Tree internal node
     BPTREE_LEAF_PAGE = 4, // B+Tree leaf node (reuses DataPage slotted structure)
-    UNDO_PAGE = 5, // Undo record page
 };
 
 // Packed page header at beginning of each page

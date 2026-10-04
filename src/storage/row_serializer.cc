@@ -213,6 +213,9 @@ Row RowSerializer::deserialize(const char * data, uint32_t len, const Schema & s
     const char * bitmap = data + pos;
     pos += null_bitmap_bytes;
 
+    // Pre-allocate to avoid vector reallocations during append
+    row.reserve_values(num_cols);
+
     for (uint16_t i = 0; i < num_cols && i < schema.columns_.size(); ++i)
     {
         // Check null bitmap

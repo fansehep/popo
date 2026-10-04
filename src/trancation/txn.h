@@ -3,7 +3,6 @@
 #include <vector>
 #include "src/storage/common.h"
 #include "src/storage/redo_log.h"
-#include "src/storage/undo_space.h"
 
 namespace neon::txn
 {
@@ -31,12 +30,6 @@ public:
     const std::vector<neon::storage::LogRecord> & write_set() const { return write_set_; }
     void add_to_write_set(const neon::storage::LogRecord & record) { write_set_.push_back(record); }
 
-    // Undo chain for MVCC/rollback support
-    neon::storage::UndoLoc first_undo_loc() const { return first_undo_loc_; }
-    void set_first_undo_loc(neon::storage::UndoLoc loc) { first_undo_loc_ = loc; }
-    neon::storage::UndoLoc last_undo_loc() const { return last_undo_loc_; }
-    void set_last_undo_loc(neon::storage::UndoLoc loc) { last_undo_loc_ = loc; }
-
     bool is_running() const { return state_ == TxnState::RUNNING; }
     bool is_committed() const { return state_ == TxnState::COMMITTED; }
     bool is_aborted() const { return state_ == TxnState::ABORTED; }
@@ -46,8 +39,6 @@ private:
     TxnState state_;
     neon::storage::lsn_t start_lsn_ = neon::storage::INVALID_LSN;
     std::vector<neon::storage::LogRecord> write_set_;
-    neon::storage::UndoLoc first_undo_loc_;
-    neon::storage::UndoLoc last_undo_loc_;
 };
 
 } // namespace neon::txn

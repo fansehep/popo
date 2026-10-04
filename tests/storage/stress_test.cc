@@ -52,12 +52,12 @@ Schema make_schema(const std::string & name)
     return schema;
 }
 
-Row make_row(int32_t id, const std::string & payload)
+Tuple make_row(const Schema & schema, int32_t id, const std::string & payload)
 {
     Row row;
     row.append_value(Value(ValueType::Int32, id));
     row.append_value(Value(ValueType::String, payload));
-    return row;
+    return Tuple::form(schema, row);
 }
 
 } // anonymous namespace
@@ -126,7 +126,7 @@ TEST_F(StressTest, SequentialInsert5000)
     for (int i = 0; i < N; ++i)
     {
         std::string payload = "seq_data_" + std::to_string(i);
-        auto rid = heap->insert_row(&txn, make_row(i, payload));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, payload));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
     }
 
@@ -163,7 +163,7 @@ TEST_F(StressTest, ReverseOrderInsert)
     for (int i = N - 1; i >= 0; --i)
     {
         std::string payload = "rev_" + std::to_string(i);
-        auto rid = heap->insert_row(&txn, make_row(i, payload));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, payload));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
     }
 
@@ -187,7 +187,7 @@ TEST_F(StressTest, RandomInsertLargePayload)
     {
         std::string payload(120, 'A' + (id % 26));
         payload += "_" + std::to_string(id);
-        auto rid = heap->insert_row(&txn, make_row(id, payload));
+        auto rid = heap->insert_row(&txn, make_row(schema, id, payload));
         if (!rid.is_valid())
             failed++;
     }
@@ -205,7 +205,7 @@ TEST_F(StressTest, HeavyDeleteAndReinsert)
     constexpr int N = 1000;
     for (int i = 0; i < N; ++i)
     {
-        heap->insert_row(&txn, make_row(i, "heavy_test"));
+        heap->insert_row(&txn, make_row(schema, i, "heavy_test"));
     }
 
     std::mt19937 g(99);
@@ -237,7 +237,7 @@ TEST_F(StressTest, HeavyDeleteAndReinsert)
     {
         int id = dist(g);
         new_ids.insert(id);
-        heap->insert_row(&ins_txn, make_row(id, "reinserted"));
+        heap->insert_row(&ins_txn, make_row(schema, id, "reinserted"));
     }
 
     // Verify: scan should have roughly N rows (some deletes may fail,
@@ -273,7 +273,7 @@ TEST_F(StressTest, RepeatedSplitsAndScans)
         {
             int id = batch * BATCH + i;
             std::string payload(200, 'A' + (batch % 26));
-            auto rid = heap->insert_row(&txn, make_row(id, payload));
+            auto rid = heap->insert_row(&txn, make_row(schema, id, payload));
             ASSERT_TRUE(rid.is_valid()) << "Failed at batch=" << batch << " id=" << id;
         }
 
@@ -295,7 +295,7 @@ TEST_F(StressTest, TimingLargeScale)
     for (int i = 0; i < N; ++i)
     {
         std::string payload = "perf_test_" + std::to_string(i);
-        heap->insert_row(&txn, make_row(i, payload));
+        heap->insert_row(&txn, make_row(schema, i, payload));
     }
 
     auto insert_end = std::chrono::steady_clock::now();
@@ -322,7 +322,7 @@ TEST_F(StressTest, TimingLargeScale)
         {
             if (it2.current_row().values_[0].i32() == i * 20)
             {
-                heap->update_row(&upd_txn, it2.current_row_id(), make_row(i * 20, "updated"));
+                heap->update_row(&upd_txn, it2.current_row_id(), make_row(schema, i * 20, "updated"));
                 break;
             }
             it2.next();
@@ -354,7 +354,7 @@ TEST_F(StressTest, NegativeAndZeroPK)
     std::vector<int> pks = {-500, -200, 0, -1, -499, -201, -3, -2, 1, 2, 10, 5};
     for (int pk : pks)
     {
-        auto rid = heap->insert_row(&txn, make_row(pk, "neg_test"));
+        auto rid = heap->insert_row(&txn, make_row(schema, pk, "neg_test"));
         ASSERT_TRUE(rid.is_valid()) << "Failed PK=" << pk;
     }
 
@@ -384,7 +384,7 @@ TEST_F(StressTest, InterleavedInsertDelete)
         int base = cycle * 50;
         for (int i = 0; i < 50; ++i)
         {
-            heap->insert_row(&txn, make_row(base + i, "cycle"));
+            heap->insert_row(&txn, make_row(schema, base + i, "cycle"));
         }
         // Delete first 10 of this cycle
         neon::txn::Transaction del_txn(cycle + 100);
@@ -415,7 +415,7 @@ TEST_F(StressTest, ScanAfterEachInsert)
 
     for (int i = 0; i < N; ++i)
     {
-        heap->insert_row(&txn, make_row(i, "scan_test"));
+        heap->insert_row(&txn, make_row(schema, i, "scan_test"));
         // Scan every 50 inserts to verify
         if (i % 50 == 49 || i == N - 1)
         {
@@ -443,7 +443,7 @@ TEST_F(StressTest, UpdateToLargerPayload)
 
     for (int i = 0; i < N; ++i)
     {
-        heap->insert_row(&txn, make_row(i, "small"));
+        heap->insert_row(&txn, make_row(schema, i, "small"));
     }
 
     // Update every 3rd row to a much larger payload
@@ -459,7 +459,7 @@ TEST_F(StressTest, UpdateToLargerPayload)
             {
                 std::string big(500, 'X');
                 big += std::to_string(i);
-                heap->update_row(&upd_txn, it.current_row_id(), make_row(i, big));
+                heap->update_row(&upd_txn, it.current_row_id(), make_row(schema, i, big));
                 break;
             }
             it.next();
@@ -478,7 +478,7 @@ TEST_F(StressTest, DeepTreeManyRows)
 
     for (int i = 0; i < N; ++i)
     {
-        auto rid = heap->insert_row(&txn, make_row(i, "x"));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, "x"));
         ASSERT_TRUE(rid.is_valid()) << "Failed at i=" << i;
     }
 

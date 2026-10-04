@@ -1,9 +1,122 @@
 #include "src/storage/table_heap.h"
+#include <cstring>
 #include <spdlog/spdlog.h>
-#include "src/storage/row_serializer.h"
 
 namespace neon::storage
 {
+
+namespace
+{
+
+bool is_null_value(const neon::type::Value & v)
+{
+    return v.datatype() == neon::type::ValueType::Null;
+}
+
+int64_t read_i64(const neon::type::Value & v)
+{
+    using neon::type::ValueType;
+    switch (v.datatype())
+    {
+        case ValueType::Uint8:
+            return v.u8();
+        case ValueType::Uint16:
+            return v.u16();
+        case ValueType::Uint32:
+            return v.u32();
+        case ValueType::Uint64:
+            return static_cast<int64_t>(v.u64());
+        case ValueType::Int8:
+            return v.i8();
+        case ValueType::Int16:
+            return v.i16();
+        case ValueType::Int32:
+            return v.i32();
+        case ValueType::Int64:
+            return v.i64();
+        case ValueType::Bool:
+            return v.boolean() ? 1 : 0;
+        case ValueType::Char:
+            return v.u8();
+        case ValueType::Float32:
+            return static_cast<int64_t>(v.f32());
+        case ValueType::Float64:
+            return static_cast<int64_t>(v.f64());
+        default:
+            return 0;
+    }
+}
+
+double read_f64(const neon::type::Value & v)
+{
+    using neon::type::ValueType;
+    switch (v.datatype())
+    {
+        case ValueType::Float32:
+            return v.f32();
+        case ValueType::Float64:
+            return v.f64();
+        default:
+            return static_cast<double>(read_i64(v));
+    }
+}
+
+int cmp_i64(int64_t a, int64_t b)
+{
+    if (a < b)
+        return -1;
+    if (a > b)
+        return 1;
+    return 0;
+}
+
+// Column type comes from Schema. Each Value is only a payload at this boundary,
+// so the read switch follows the value's own tag (an Int64 literal and an Int32
+// column still compare as integers).
+int compare_as(neon::type::ValueType column_type, const neon::type::Value & a, const neon::type::Value & b)
+{
+    using neon::type::ValueType;
+    if (is_null_value(a) && is_null_value(b))
+        return 0;
+    if (is_null_value(a))
+        return -1;
+    if (is_null_value(b))
+        return 1;
+
+    switch (column_type)
+    {
+        case ValueType::String:
+            if (a.string_ref() < b.string_ref())
+                return -1;
+            if (a.string_ref() > b.string_ref())
+                return 1;
+            return 0;
+        case ValueType::Float32:
+        case ValueType::Float64: {
+            double x = read_f64(a);
+            double y = read_f64(b);
+            if (x < y)
+                return -1;
+            if (x > y)
+                return 1;
+            return 0;
+        }
+        case ValueType::Uint64: {
+            auto x = static_cast<uint64_t>(read_i64(a));
+            auto y = static_cast<uint64_t>(read_i64(b));
+            if (x < y)
+                return -1;
+            if (x > y)
+                return 1;
+            return 0;
+        }
+        default:
+            return cmp_i64(read_i64(a), read_i64(b));
+    }
+}
+
+} // namespace
+
 
 // ============================================================================
 // TableHeap — Clustered B+Tree Index
@@ -17,15 +130,9 @@ TableHeap::TableHeap(
 
 // --- Primary Key Helpers ---
 
-neon::type::Value TableHeap::extract_pk(const neon::type::Row & row) const
+neon::type::Value TableHeap::extract_pk(const Tuple & tuple) const
 {
-    int32_t pk_idx = schema_.primary_key_col_idx_;
-    if (pk_idx < 0 || pk_idx >= static_cast<int32_t>(row.values_.size()))
-    {
-        // Return a default null value for tables without a PK
-        return neon::type::Value();
-    }
-    return row.values_[pk_idx];
+    return extract_pk_from_serialized(tuple.data(), tuple.size());
 }
 
 neon::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint16_t len) const
@@ -35,35 +142,85 @@ neon::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint1
     {
         return neon::type::Value();
     }
-    // Deserialize the whole row and extract PK column
+
+    // Fast path: extract a fixed-width PK column directly from serialized bytes
+    // without deserializing the entire row.
+    if (pk_idx == 0 && len > sizeof(uint16_t))
+    {
+        uint16_t num_cols = 0;
+        std::memcpy(&num_cols, data, sizeof(uint16_t));
+        uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
+
+        if (len > sizeof(uint16_t) + null_bitmap_bytes)
+        {
+            // Check null bitmap: bit 0 of byte 0
+            bool is_null = (data[sizeof(uint16_t)] >> 0) & 1;
+            if (!is_null)
+            {
+                neon::type::ValueType pk_type = schema_.columns_[0].data_type_;
+                const char * val_data = data + sizeof(uint16_t) + null_bitmap_bytes;
+
+                switch (pk_type)
+                {
+                    case neon::type::ValueType::Int32: {
+                        int32_t v = 0;
+                        std::memcpy(&v, val_data, 4);
+                        return neon::type::Value(neon::type::ValueType::Int32, v);
+                    }
+                    case neon::type::ValueType::Uint32: {
+                        uint32_t v = 0;
+                        std::memcpy(&v, val_data, 4);
+                        return neon::type::Value(neon::type::ValueType::Uint32, v);
+                    }
+                    case neon::type::ValueType::Int64: {
+                        int64_t v = 0;
+                        std::memcpy(&v, val_data, 8);
+                        return neon::type::Value(neon::type::ValueType::Int64, v);
+                    }
+                    case neon::type::ValueType::Uint64: {
+                        uint64_t v = 0;
+                        std::memcpy(&v, val_data, 8);
+                        return neon::type::Value(neon::type::ValueType::Uint64, v);
+                    }
+                    case neon::type::ValueType::Float64: {
+                        double v = 0;
+                        std::memcpy(&v, val_data, 8);
+                        return neon::type::Value(neon::type::ValueType::Float64, v);
+                    }
+                    case neon::type::ValueType::Int8: {
+                        int8_t v = 0;
+                        std::memcpy(&v, val_data, 1);
+                        return neon::type::Value(neon::type::ValueType::Int8, v);
+                    }
+                    case neon::type::ValueType::Int16: {
+                        int16_t v = 0;
+                        std::memcpy(&v, val_data, 2);
+                        return neon::type::Value(neon::type::ValueType::Int16, v);
+                    }
+                    default:
+                        break; // Fall through to full deserialize
+                }
+            }
+        }
+    }
+
+    // Slow path: full row deserialization
     auto row = RowSerializer::deserialize(data, len, schema_);
     if (pk_idx >= static_cast<int32_t>(row.values_.size()))
     {
         return neon::type::Value();
     }
-    return row.values_[pk_idx];
+    return std::move(row.values_[pk_idx]);
 }
 
 int TableHeap::compare_pk(const neon::type::Value & a, const neon::type::Value & b) const
 {
-    if (a.datatype() == neon::type::ValueType::Null && b.datatype() == neon::type::ValueType::Null)
+    int32_t pk_idx = schema_.primary_key_col_idx_;
+    if (pk_idx < 0 || pk_idx >= static_cast<int32_t>(schema_.columns_.size()))
     {
         return 0;
     }
-    if (a.datatype() == neon::type::ValueType::Null)
-        return -1;
-    if (b.datatype() == neon::type::ValueType::Null)
-        return 1;
-
-    if (a.datatype() != b.datatype())
-    {
-        // Treat type mismatch as equal for simplicity (shouldn't happen)
-        return 0;
-    }
-
-    if (a == b)
-        return 0;
-    return (a < b) ? -1 : 1;
+    return compare_as(schema_.columns_[pk_idx].data_type_, a, b);
 }
 
 // --- B+Tree Navigation ---
@@ -107,11 +264,20 @@ page_id_t TableHeap::search_leaf_with_path(const neon::type::Value & pk, std::ve
                 return compare_pk(key_a, key_b);
             };
 
-            neon::type::Row pk_row;
-            pk_row.append_value(pk);
-            auto pk_serialized = RowSerializer::serialize(pk_row, schema_);
+            neon::type::Row key_row;
+            int32_t ncols = static_cast<int32_t>(schema_.columns_.size());
+            int32_t pk_idx = schema_.primary_key_col_idx_;
+            key_row.reserve_values(static_cast<size_t>(ncols));
+            for (int32_t i = 0; i < ncols; ++i)
+            {
+                if (i == pk_idx)
+                    key_row.append_value(pk);
+                else
+                    key_row.append_value(neon::type::Value());
+            }
+            auto key = Tuple::form(schema_, key_row);
 
-            current = internal->find_child(pk_serialized.data(), static_cast<uint16_t>(pk_serialized.size()), cmp);
+            current = internal->find_child(key.data(), key.size(), cmp);
         }
         else
         {
@@ -413,11 +579,11 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
 
 // --- Public API ---
 
-RowId TableHeap::insert_row(neon::txn::Transaction * txn, const neon::type::Row & row)
+RowId TableHeap::insert_row(neon::txn::Transaction * txn, const Tuple & tuple)
 {
-    auto serialized = RowSerializer::serialize(row, schema_);
-    auto data_len = static_cast<uint16_t>(serialized.size());
-    auto pk = extract_pk(row);
+    const auto & serialized = tuple.bytes();
+    auto data_len = tuple.size();
+    auto pk = extract_pk(tuple);
 
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -526,100 +692,226 @@ bool TableHeap::delete_row(neon::txn::Transaction * txn, RowId rid)
     return true;
 }
 
-RowId TableHeap::update_row(neon::txn::Transaction * txn, RowId rid, const neon::type::Row & new_row)
+RowId TableHeap::update_row(neon::txn::Transaction * txn, RowId rid, const Tuple & tuple)
 {
-    auto serialized = RowSerializer::serialize(new_row, schema_);
-    auto data_len = static_cast<uint16_t>(serialized.size());
-    auto new_pk = extract_pk(new_row);
+    const auto & serialized = tuple.bytes();
+    auto data_len = tuple.size();
+    auto new_pk = extract_pk(tuple);
 
     std::lock_guard<std::mutex> lock(mutex_);
 
-    auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
-    if (!guard.is_valid())
+    std::vector<char> old_data;
+    neon::type::Value old_pk;
     {
-        return RowId{INVALID_PAGE_ID, 0};
+        auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
+        if (!guard.is_valid())
+        {
+            return RowId{INVALID_PAGE_ID, 0};
+        }
+        auto * page = reinterpret_cast<DataPage *>(guard.data());
+        auto [old_data_ptr, old_len] = page->get_tuple(rid.slot_id);
+        if (old_data_ptr == nullptr)
+        {
+            return RowId{INVALID_PAGE_ID, 0};
+        }
+        old_data.assign(old_data_ptr, old_data_ptr + old_len);
+        old_pk = extract_pk_from_serialized(old_data_ptr, old_len);
     }
 
-    auto * page = reinterpret_cast<DataPage *>(guard.data());
-    auto [old_data_ptr, old_len] = page->get_tuple(rid.slot_id);
-    if (old_data_ptr == nullptr)
+    // One generation covers the new page and the tombstone of the old page.
+    // Abort reloads committed page images; the root id is the only pointer that
+    // lives outside a page, so it is restored explicitly.
+    DiskManager * disk = buffer_pool_->disk_manager();
+    bool own_txn = disk->begin_txn();
+    page_id_t root_snap = root_page_id_;
+    struct CommitGuard
     {
-        return RowId{INVALID_PAGE_ID, 0};
-    }
+        DiskManager * disk = nullptr;
+        BufferPoolManager * pool = nullptr;
+        page_id_t * root = nullptr;
+        page_id_t root_snap = INVALID_PAGE_ID;
+        bool own = false;
+        bool ok = false;
 
-    std::vector<char> old_data(old_data_ptr, old_data_ptr + old_len);
-    auto old_pk = extract_pk_from_serialized(old_data_ptr, old_len);
+        CommitGuard(DiskManager * d, BufferPoolManager * p, page_id_t * r, page_id_t snap, bool own_txn)
+            : disk(d), pool(p), root(r), root_snap(snap), own(own_txn)
+        {
+        }
 
-    // If PK unchanged, try in-place update
+        ~CommitGuard()
+        {
+            if (!own)
+            {
+                return;
+            }
+            if (ok)
+            {
+                pool->flush_all();
+                disk->commit_txn();
+            }
+            else
+            {
+                disk->abort_txn();
+                pool->invalidate_all();
+                *root = root_snap;
+            }
+        }
+    } commit_guard(disk, buffer_pool_, &root_page_id_, root_snap, own_txn);
+
+    // Same primary key and the new tuple fits in the slot: keep the logical page.
+    // Flush still appends a new compressed image; the old image becomes garbage.
     if (compare_pk(old_pk, new_pk) == 0)
     {
-        auto update_result = page->update_tuple(rid.slot_id, serialized.data(), data_len);
-        if (update_result.has_value())
+        auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
+        if (guard.is_valid())
         {
-            slot_id_t new_slot = update_result.value();
-
-            LogRecord record;
-            record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
-            record.type = LogType::UPDATE;
-            record.table_name = table_name_;
-            record.page_id = rid.page_id;
-            record.slot_id = rid.slot_id;
-            record.old_data = std::move(old_data);
-            record.new_data = serialized;
-
-            lsn_t lsn = redo_log_->append(record);
-            page->header()->lsn = lsn;
-            guard.mark_dirty();
-
-            if (txn)
+            auto * page = reinterpret_cast<DataPage *>(guard.data());
+            if (auto updated = page->update_tuple(rid.slot_id, serialized.data(), data_len); updated.has_value())
             {
-                record.lsn = lsn;
-                txn->add_to_write_set(record);
+                LogRecord record;
+                record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
+                record.type = LogType::UPDATE;
+                record.table_name = table_name_;
+                record.page_id = rid.page_id;
+                record.slot_id = updated.value();
+                record.old_data = old_data;
+                record.new_data = serialized;
+                lsn_t lsn = redo_log_->append(record);
+                page->header()->lsn = lsn;
+                guard.mark_dirty();
+                if (txn)
+                {
+                    record.lsn = lsn;
+                    txn->add_to_write_set(record);
+                }
+                commit_guard.ok = true;
+                return RowId{rid.page_id, updated.value()};
             }
-
-            return RowId{rid.page_id, new_slot};
         }
     }
 
-    // PK changed or can't fit — delete old, insert new
-    page->delete_tuple(rid.slot_id);
-    guard.mark_dirty();
-
-    slot_id_t new_slot = btree_insert(serialized.data(), data_len, new_pk);
-    std::vector<page_id_t> dummy_path2;
-    page_id_t new_page_id = search_leaf_with_path(new_pk, dummy_path2);
-
-    LogRecord record;
-    record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
-    record.type = LogType::UPDATE;
-    record.table_name = table_name_;
-    record.page_id = rid.page_id;
-    record.slot_id = rid.slot_id;
-    record.old_data = std::move(old_data);
-    record.new_data = serialized;
-
-    lsn_t lsn = redo_log_->append(record);
-
+    char image[PAGE_SIZE];
     {
-        auto new_guard = buffer_pool_->fetch_page(table_name_, new_page_id);
-        if (new_guard.is_valid())
+        auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
+        if (!guard.is_valid())
         {
-            auto * np = reinterpret_cast<DataPage *>(new_guard.data());
-            np->header()->lsn = lsn;
-            new_guard.mark_dirty();
+            return RowId{INVALID_PAGE_ID, 0};
+        }
+        std::memcpy(image, guard.data(), PAGE_SIZE);
+    }
+
+    std::vector<page_id_t> path;
+    page_id_t found = search_leaf_with_path(old_pk, path);
+    if (found != rid.page_id)
+    {
+        return RowId{INVALID_PAGE_ID, 0};
+    }
+
+    page_id_t prev_leaf = INVALID_PAGE_ID;
+    {
+        page_id_t cur = find_leftmost_leaf();
+        while (cur != INVALID_PAGE_ID && cur != rid.page_id)
+        {
+            auto walk = buffer_pool_->fetch_page(table_name_, cur);
+            if (!walk.is_valid())
+            {
+                return RowId{INVALID_PAGE_ID, 0};
+            }
+            prev_leaf = cur;
+            cur = reinterpret_cast<DataPage *>(walk.data())->next_leaf_page();
         }
     }
 
-    if (txn)
+    page_id_t new_pid = INVALID_PAGE_ID;
     {
-        record.lsn = lsn;
-        txn->add_to_write_set(record);
-    }
+        auto new_guard = buffer_pool_->new_page(table_name_, new_pid);
+        if (!new_guard.is_valid())
+        {
+            return RowId{INVALID_PAGE_ID, 0};
+        }
+        std::memcpy(new_guard.data(), image, PAGE_SIZE);
+        auto * copied = reinterpret_cast<DataPage *>(new_guard.data());
+        copied->header()->page_id = new_pid;
 
-    return RowId{new_page_id, new_slot};
+        bool rewritten = false;
+        slot_id_t new_slot = rid.slot_id;
+        if (compare_pk(old_pk, new_pk) == 0)
+        {
+            if (auto updated = copied->update_tuple(rid.slot_id, serialized.data(), data_len); updated.has_value())
+            {
+                new_slot = updated.value();
+                rewritten = true;
+            }
+        }
+        if (!rewritten)
+        {
+            copied->delete_tuple(rid.slot_id);
+            copied->compact();
+        }
+        new_guard.mark_dirty();
+
+        if (prev_leaf != INVALID_PAGE_ID)
+        {
+            auto prev_guard = buffer_pool_->fetch_page(table_name_, prev_leaf);
+            if (prev_guard.is_valid())
+            {
+                reinterpret_cast<DataPage *>(prev_guard.data())->set_next_leaf_page(new_pid);
+                prev_guard.mark_dirty();
+            }
+        }
+        if (!path.empty())
+        {
+            auto parent_guard = buffer_pool_->fetch_page(table_name_, path.back());
+            if (!parent_guard.is_valid()
+                || !reinterpret_cast<BTreeInternalPage *>(parent_guard.data())->replace_child(rid.page_id, new_pid))
+            {
+                return RowId{INVALID_PAGE_ID, 0};
+            }
+            parent_guard.mark_dirty();
+        }
+        if (root_page_id_ == rid.page_id)
+        {
+            root_page_id_ = new_pid;
+        }
+
+        buffer_pool_->drop_page(table_name_, rid.page_id);
+        disk->retire_page(table_name_, rid.page_id);
+
+        if (!rewritten)
+        {
+            new_slot = btree_insert(serialized.data(), data_len, new_pk);
+            std::vector<page_id_t> placed;
+            new_pid = search_leaf_with_path(new_pk, placed);
+        }
+
+        LogRecord record;
+        record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
+        record.type = LogType::UPDATE;
+        record.table_name = table_name_;
+        record.page_id = new_pid;
+        record.slot_id = new_slot;
+        record.old_data = std::move(old_data);
+        record.new_data = serialized;
+        lsn_t lsn = redo_log_->append(record);
+        {
+            auto placed_guard = buffer_pool_->fetch_page(table_name_, new_pid);
+            if (placed_guard.is_valid())
+            {
+                reinterpret_cast<DataPage *>(placed_guard.data())->header()->lsn = lsn;
+                placed_guard.mark_dirty();
+            }
+        }
+        if (txn)
+        {
+            record.lsn = lsn;
+            txn->add_to_write_set(record);
+        }
+        commit_guard.ok = true;
+        return RowId{new_pid, new_slot};
+    }
 }
 
-std::optional<neon::type::Row> TableHeap::get_row(RowId rid) const
+std::optional<Tuple> TableHeap::get_row(RowId rid) const
 {
     auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
     if (!guard.is_valid())
@@ -634,7 +926,7 @@ std::optional<neon::type::Row> TableHeap::get_row(RowId rid) const
         return std::nullopt;
     }
 
-    return RowSerializer::deserialize(data_ptr, len, schema_);
+    return Tuple(std::vector<char>(data_ptr, data_ptr + len));
 }
 
 std::optional<RowId> TableHeap::lookup_pk(const neon::type::Value & pk) const
@@ -754,12 +1046,21 @@ bool TableIterator::valid() const
     return valid_;
 }
 
-neon::type::Row TableIterator::current_row() const
+Tuple TableIterator::current_tuple() const
 {
     auto guard = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
     const auto * page = reinterpret_cast<const DataPage *>(guard.data());
     auto [data_ptr, len] = page->get_tuple(current_slot_id_);
-    return RowSerializer::deserialize(data_ptr, len, schema_);
+    if (data_ptr == nullptr)
+    {
+        return Tuple();
+    }
+    return Tuple(std::vector<char>(data_ptr, data_ptr + len));
+}
+
+neon::type::Row TableIterator::current_row() const
+{
+    return current_tuple().deform(schema_);
 }
 
 RowId TableIterator::current_row_id() const

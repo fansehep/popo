@@ -90,6 +90,12 @@ public:
     /// Flush all dirty pages to disk.
     void flush_all();
 
+    /// Drop a cached page without writing it. Used when the page is retired.
+    void drop_page(const std::string & table_name, page_id_t page_id);
+
+    /// Forget every cached page. The next fetch reads the committed image.
+    void invalidate_all();
+
     /// Unpin a frame (called by PageGuard destructor).
     void unpin(frame_id_t frame_id, bool is_dirty);
 
@@ -108,6 +114,7 @@ private:
     LRUReplacer replacer_;
     std::unordered_map<PageKey, frame_id_t, PageKeyHash> page_table_;
     std::list<frame_id_t> free_list_;
+    std::vector<frame_id_t> dirty_;
     std::mutex latch_;
 
     // Get a free frame (from free list or by evicting).

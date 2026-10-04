@@ -5,7 +5,7 @@ project(Neon LANGUAGES C CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 set(CMAKE_CXX_STANDARD 23)
 
-add_compile_options(-g "-O0")
+# add_compile_options(-g "-O0")
 include(FetchContent)
 
 

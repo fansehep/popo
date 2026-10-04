@@ -529,6 +529,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             case OpCode::MakeRow: {
                 neon::type::Row row;
                 int32_t num_cols = inst.operand1;
+                row.reserve_values(num_cols);
                 std::vector<neon::type::Value> vals(num_cols);
                 for (int i = num_cols - 1; i >= 0; i--)
                 {
@@ -536,7 +537,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 }
                 for (auto & v : vals)
                 {
-                    row.append_value(v);
+                    row.append_value(std::move(v));
                 }
                 pending_row_ = std::move(row);
                 pc_++;
@@ -553,7 +554,8 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 {
                     return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "InsertRow: no pending row"));
                 }
-                auto rid = it->second.heap->insert_row(txn_, pending_row_.value());
+                auto tuple = neon::storage::Tuple::form(it->second.schema, pending_row_.value());
+                auto rid = it->second.heap->insert_row(txn_, tuple);
                 if (!rid.is_valid())
                 {
                     return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "InsertRow: insert failed"));
@@ -601,7 +603,8 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                         updated_row.values_[col_idx] = value;
                     }
                 }
-                auto new_rid = cursor.heap->update_row(txn_, cursor.current_rid, updated_row);
+                auto new_tuple = neon::storage::Tuple::form(cursor.schema, updated_row);
+                auto new_rid = cursor.heap->update_row(txn_, cursor.current_rid, new_tuple);
                 result_.rows_affected++;
                 cursor.current_rid = new_rid;
                 pc_++;
@@ -625,14 +628,14 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     break;
                 }
                 cursor.current_rid = rid_opt.value();
-                auto row_opt = cursor.heap->get_row(cursor.current_rid);
-                if (!row_opt.has_value())
+                auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
+                if (!tuple_opt.has_value())
                 {
                     cursor.has_current = false;
                     pc_ = inst.operand2;
                     break;
                 }
-                cursor.current_row_cache = std::move(row_opt.value());
+                cursor.current_row_cache = tuple_opt->deform(cursor.schema);
                 cursor.has_current = true;
                 pc_++;
                 break;
@@ -788,6 +791,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 }
                 int32_t num_vals = inst.operand2;
                 auto row = std::make_shared<neon::type::Row>();
+                row->reserve_values(num_vals);
                 std::vector<neon::type::Value> vals(num_vals);
                 for (int i = num_vals - 1; i >= 0; i--)
                 {
@@ -795,7 +799,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 }
                 for (auto & v : vals)
                 {
-                    row->append_value(v);
+                    row->append_value(std::move(v));
                 }
                 it->second.rows.push_back(row);
                 pc_++;

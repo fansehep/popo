@@ -1,189 +1,921 @@
 #include "src/storage/disk_manager.h"
+
+#include <cerrno>
 #include <cstring>
+#include <fcntl.h>
+#include <filesystem>
+#include <spdlog/spdlog.h>
+#include <stdexcept>
+#include <unistd.h>
+#include <unordered_set>
+#include <zstd.h>
+#include "src/storage/io_ring.h"
 
 namespace neon::storage
 {
 
-DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir)
+namespace
 {
-    // Create data directory if it doesn't exist
-    std::filesystem::create_directories(data_dir_);
 
-    // Scan existing .ndb files to populate next_page_ids_
-    if (std::filesystem::exists(data_dir_))
+bool block_has_space(const BlockMeta & meta, uint32_t comp_size)
+{
+    if (meta.flags == BLOCK_FREE || meta.flags == BLOCK_SEALED)
     {
-        for (const auto & entry : std::filesystem::directory_iterator(data_dir_))
+        return false;
+    }
+    if (meta.page_count >= MAX_PAGES_PER_BLOCK)
+    {
+        return false;
+    }
+    return meta.payload_end + comp_size <= BLOCK_SIZE;
+}
+
+} // namespace
+
+DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir), io_(std::make_unique<IoRing>())
+{
+    cctx_ = ZSTD_createCCtx();
+    dctx_ = ZSTD_createDCtx();
+    if (cctx_ == nullptr || dctx_ == nullptr)
+    {
+        ZSTD_freeCCtx(static_cast<ZSTD_CCtx *>(cctx_));
+        ZSTD_freeDCtx(static_cast<ZSTD_DCtx *>(dctx_));
+        cctx_ = nullptr;
+        dctx_ = nullptr;
+        throw std::runtime_error("failed to create zstd context");
+    }
+    ZSTD_CCtx_setParameter(static_cast<ZSTD_CCtx *>(cctx_), ZSTD_c_compressionLevel, 1);
+    ZSTD_CCtx_setParameter(static_cast<ZSTD_CCtx *>(cctx_), ZSTD_c_checksumFlag, 0);
+    ZSTD_CCtx_setParameter(static_cast<ZSTD_CCtx *>(cctx_), ZSTD_c_contentSizeFlag, 0);
+    comp_buf_.resize(ZSTD_compressBound(PAGE_SIZE));
+    std::filesystem::create_directories(data_dir_);
+    if (!std::filesystem::exists(data_dir_))
+    {
+        return;
+    }
+    for (const auto & entry : std::filesystem::directory_iterator(data_dir_))
+    {
+        if (!entry.is_regular_file() || entry.path().extension() != ".ndb")
         {
-            if (entry.is_regular_file() && entry.path().extension() == ".ndb")
-            {
-                std::string table_name = entry.path().stem().string();
-                auto file_size = entry.file_size();
-                page_id_t num_pages = static_cast<page_id_t>(file_size / PAGE_SIZE);
-                // next_page_id = num_pages + 1 (page IDs start from 1)
-                next_page_ids_[table_name] = num_pages + 1;
-            }
+            continue;
+        }
+        std::string table_name = entry.path().stem().string();
+        int fd = ::open(entry.path().c_str(), O_RDWR);
+        if (fd < 0)
+        {
+            throw std::runtime_error("Failed to open table file: " + entry.path().string());
+        }
+        auto loaded = load_table(table_name, fd);
+        if (!loaded)
+        {
+            ::close(fd);
+            throw std::runtime_error(loaded.error().error_message);
         }
     }
 }
 
-DiskManager::~DiskManager() = default;
+DiskManager::~DiskManager()
+{
+    ZSTD_freeCCtx(static_cast<ZSTD_CCtx *>(cctx_));
+    ZSTD_freeDCtx(static_cast<ZSTD_DCtx *>(dctx_));
+    cctx_ = nullptr;
+    dctx_ = nullptr;
+    for (auto & [name, table] : tables_)
+    {
+        if (table.fd >= 0)
+        {
+            ::close(table.fd);
+            table.fd = -1;
+        }
+    }
+}
+
+neon::base::Result<std::vector<char>> DiskManager::compress_page(const char * src)
+{
+    size_t n = ZSTD_compress2(static_cast<ZSTD_CCtx *>(cctx_), comp_buf_.data(), comp_buf_.size(), src, PAGE_SIZE);
+    if (ZSTD_isError(n))
+    {
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), ZSTD_getErrorName(n)));
+    }
+    return std::vector<char>(comp_buf_.data(), comp_buf_.data() + n);
+}
+
+neon::base::Result<void> DiskManager::decompress_page(const char * src, size_t src_len, char * dest)
+{
+    size_t n = ZSTD_decompressDCtx(static_cast<ZSTD_DCtx *>(dctx_), dest, PAGE_SIZE, src, src_len);
+    if (ZSTD_isError(n) || n != PAGE_SIZE)
+    {
+        return std::unexpected(neon::base::Error(
+            static_cast<int32_t>(neon::base::InternalErr), ZSTD_isError(n) ? ZSTD_getErrorName(n) : "decompressed page size mismatch"));
+    }
+    return {};
+}
 
 std::string DiskManager::table_file_path(const std::string & table_name) const
 {
     return data_dir_ + "/" + table_name + ".ndb";
 }
 
-void DiskManager::ensure_file_exists(const std::string & table_name)
+DiskManager::TableState * DiskManager::find_table(const std::string & table_name)
 {
-    std::string path = table_file_path(table_name);
-    if (!std::filesystem::exists(path))
+    auto it = tables_.find(table_name);
+    if (it == tables_.end())
     {
-        throw std::runtime_error("Table file does not exist: " + path);
+        return nullptr;
     }
+    return &it->second;
+}
+
+const DiskManager::TableState * DiskManager::find_table(const std::string & table_name) const
+{
+    auto it = tables_.find(table_name);
+    if (it == tables_.end())
+    {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+neon::base::Result<void> DiskManager::read_block_meta(TableState & table, uint32_t block_id, BlockMeta & meta)
+{
+    std::memset(&meta, 0, sizeof(meta));
+    return io_->read_at(table.fd, &meta, sizeof(meta), block_file_offset(block_id));
+}
+
+neon::base::Result<void> DiskManager::write_block_meta(TableState & table, uint32_t block_id)
+{
+    if (block_id >= table.blocks.size())
+    {
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "block id out of range"));
+    }
+    auto result = io_->write_at(table.fd, &table.blocks[block_id], sizeof(BlockMeta), block_file_offset(block_id));
+    if (result)
+    {
+        table.block_dirty[block_id] = 0;
+    }
+    return result;
+}
+
+neon::base::Result<void> DiskManager::write_header(TableState & table)
+{
+    alignas(FileHeader) char buf[FILE_HEADER_SIZE];
+    std::memset(buf, 0, sizeof(buf));
+    std::memcpy(buf, &table.header, sizeof(FileHeader));
+    return io_->write_at(table.fd, buf, FILE_HEADER_SIZE, 0);
+}
+
+neon::base::Result<void> DiskManager::load_table(const std::string & table_name, int fd)
+{
+    TableState table;
+    table.fd = fd;
+    auto header_read = io_->read_at(fd, &table.header, sizeof(FileHeader), 0);
+    if (!header_read)
+    {
+        return header_read;
+    }
+    if (table.header.magic != FILE_MAGIC || table.header.version != FILE_VERSION || table.header.block_size != BLOCK_SIZE)
+    {
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "bad table file header: " + table_name));
+    }
+
+    table.blocks.resize(table.header.block_count);
+    table.block_dirty.assign(table.header.block_count, 0);
+    uint32_t reusable = NO_BLOCK;
+    for (uint32_t id = 0; id < table.header.block_count; ++id)
+    {
+        BlockMeta meta;
+        auto meta_read = read_block_meta(table, id, meta);
+        if (!meta_read)
+        {
+            return meta_read;
+        }
+        if (meta.magic != BLOCK_MAGIC || meta.block_id != id)
+        {
+            meta = BlockMeta{};
+            meta.magic = BLOCK_MAGIC;
+            meta.block_id = id;
+            meta.flags = BLOCK_FREE;
+            meta.payload_end = BLOCK_META_SIZE;
+        }
+
+        uint16_t keep = 0;
+        uint32_t end = BLOCK_META_SIZE;
+        uint16_t raw_count = meta.page_count;
+        if (raw_count > MAX_PAGES_PER_BLOCK)
+        {
+            raw_count = MAX_PAGES_PER_BLOCK;
+        }
+        for (uint16_t i = 0; i < raw_count; ++i)
+        {
+            const PageEntry & entry = meta.entries[i];
+            if (entry.gen > table.header.committed_gen)
+            {
+                break;
+            }
+            if (i != keep)
+            {
+                meta.entries[keep] = entry;
+            }
+            if (entry.comp_size > 0)
+            {
+                end = entry.offset + entry.comp_size;
+            }
+            ++keep;
+        }
+        meta.page_count = keep;
+        meta.payload_end = end;
+        if (keep == 0)
+        {
+            meta.flags = BLOCK_FREE;
+            table.free_blocks.push_back(id);
+        }
+        else if (block_has_space(meta, 1) || (meta.page_count < MAX_PAGES_PER_BLOCK && meta.payload_end < BLOCK_SIZE))
+        {
+            meta.flags = BLOCK_OPEN;
+            reusable = id;
+        }
+        else
+        {
+            meta.flags = BLOCK_SEALED;
+        }
+
+        for (uint16_t i = 0; i < meta.page_count; ++i)
+        {
+            const PageEntry & entry = meta.entries[i];
+            PageLoc loc;
+            loc.block_id = id;
+            loc.offset = entry.offset;
+            loc.comp_size = entry.comp_size;
+            loc.gen = entry.gen;
+            loc.tombstone = entry.flags == ENTRY_TOMBSTONE;
+            auto it = table.committed.find(entry.page_id);
+            if (it == table.committed.end() || entry.gen >= it->second.gen)
+            {
+                table.committed[entry.page_id] = loc;
+            }
+        }
+        table.blocks[id] = meta;
+    }
+
+    if (table.header.open_block < table.blocks.size() && table.blocks[table.header.open_block].flags == BLOCK_OPEN)
+    {
+        // keep header open block
+    }
+    else
+    {
+        table.header.open_block = reusable;
+    }
+    tables_.emplace(table_name, std::move(table));
+    return {};
 }
 
 neon::base::Result<void> DiskManager::create_table_file(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     std::string path = table_file_path(table_name);
-
-    if (std::filesystem::exists(path))
+    if (std::filesystem::exists(path) || tables_.contains(table_name))
     {
         return std::unexpected(
             neon::base::Error(static_cast<int32_t>(neon::base::TableAlreadyExists), "Table file already exists: " + path));
     }
 
-    // Create empty file
-    std::ofstream ofs(path, std::ios::binary);
-    if (!ofs.is_open())
+    int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+    if (fd < 0)
     {
         return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to create table file: " + path));
     }
-    ofs.close();
+    if (::ftruncate(fd, FILE_HEADER_SIZE) != 0)
+    {
+        ::close(fd);
+        std::filesystem::remove(path);
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to size table file: " + path));
+    }
 
-    // Page IDs start from 1 (0 is INVALID_PAGE_ID)
-    next_page_ids_[table_name] = 1;
+    TableState table;
+    table.fd = fd;
+    table.header.magic = FILE_MAGIC;
+    table.header.version = FILE_VERSION;
+    table.header.block_size = BLOCK_SIZE;
+    table.header.block_count = 0;
+    table.header.next_page_id = 1;
+    table.header.open_block = NO_BLOCK;
+    table.header.committed_gen = 0;
+    auto written = write_header(table);
+    if (!written)
+    {
+        ::close(fd);
+        std::filesystem::remove(path);
+        return written;
+    }
+    tables_.emplace(table_name, std::move(table));
     return {};
 }
 
 void DiskManager::remove_table_file(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    auto it = tables_.find(table_name);
+    if (it != tables_.end())
+    {
+        if (it->second.fd >= 0)
+        {
+            ::close(it->second.fd);
+        }
+        tables_.erase(it);
+    }
     std::string path = table_file_path(table_name);
-
     if (std::filesystem::exists(path))
     {
         std::filesystem::remove(path);
     }
-    next_page_ids_.erase(table_name);
+}
+
+const DiskManager::PageLoc * DiskManager::lookup(const TableState & table, page_id_t page_id) const
+{
+    if (auto it = table.overlay.find(page_id); it != table.overlay.end())
+    {
+        return &it->second;
+    }
+    if (auto it = table.committed.find(page_id); it != table.committed.end())
+    {
+        return &it->second;
+    }
+    return nullptr;
 }
 
 neon::base::Result<void> DiskManager::read_page(const std::string & table_name, page_id_t page_id, char * dest)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    ensure_file_exists(table_name);
-
-    std::string path = table_file_path(table_name);
-    std::ifstream ifs(path, std::ios::binary);
-    if (!ifs.is_open())
+    TableState * table = find_table(table_name);
+    if (table == nullptr)
     {
-        return std::unexpected(
-            neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to open table file for reading: " + path));
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
     }
-
-    // Page IDs start from 1, so offset = (page_id - 1) * PAGE_SIZE
-    auto offset = static_cast<std::streamoff>((page_id - 1)) * PAGE_SIZE;
-    auto file_size = static_cast<std::streamoff>(std::filesystem::file_size(path));
-
-    if (offset >= file_size)
+    const PageLoc * loc = lookup(*table, page_id);
+    if (loc == nullptr || loc->tombstone || loc->comp_size == 0)
     {
-        // Page doesn't exist yet, fill with zeros
         std::memset(dest, 0, PAGE_SIZE);
         return {};
     }
-
-    ifs.seekg(offset);
-    ifs.read(dest, PAGE_SIZE);
-
-    // If we read fewer bytes than PAGE_SIZE (partial page at end), zero-fill the rest
-    auto bytes_read = ifs.gcount();
-    if (bytes_read < PAGE_SIZE)
+    if (auto pending = table->pending_pages.find(page_id); pending != table->pending_pages.end())
     {
-        std::memset(dest + bytes_read, 0, PAGE_SIZE - bytes_read);
+        return decompress_page(pending->second.data(), pending->second.size(), dest);
     }
+    std::vector<char> comp(loc->comp_size);
+    uint64_t off = block_file_offset(loc->block_id) + loc->offset;
+    auto read = io_->read_at(table->fd, comp.data(), loc->comp_size, off);
+    if (!read)
+    {
+        return read;
+    }
+    return decompress_page(comp.data(), comp.size(), dest);
+}
+
+void DiskManager::touch(TableState & table)
+{
+    if (table.participating)
+    {
+        return;
+    }
+    table.participating = true;
+    table.txn_gen = table.header.committed_gen + 1;
+    table.snap.block_count = table.header.block_count;
+    table.snap.next_page_id = table.header.next_page_id;
+    table.snap.open_block = table.header.open_block;
+    table.snap.free_blocks = table.free_blocks;
+    table.snap.blocks = table.blocks;
+}
+
+neon::base::Result<uint32_t> DiskManager::alloc_block(TableState & table)
+{
+    uint32_t id = NO_BLOCK;
+    if (!table.free_blocks.empty())
+    {
+        id = table.free_blocks.back();
+        table.free_blocks.pop_back();
+    }
+    else
+    {
+        id = table.header.block_count;
+        uint32_t new_count = table.header.block_count + 1;
+        off_t bytes = static_cast<off_t>(FILE_HEADER_SIZE) + static_cast<off_t>(new_count) * BLOCK_SIZE;
+        if (::ftruncate(table.fd, bytes) != 0)
+        {
+            return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "ftruncate failed"));
+        }
+        table.grew = true;
+        table.header.block_count = new_count;
+        table.blocks.emplace_back();
+        table.block_dirty.push_back(1);
+    }
+
+    BlockMeta meta{};
+    meta.magic = BLOCK_MAGIC;
+    meta.block_id = id;
+    meta.flags = BLOCK_OPEN;
+    meta.page_count = 0;
+    meta.payload_end = BLOCK_META_SIZE;
+    table.blocks[id] = meta;
+    table.block_dirty[id] = 1;
+    table.header.open_block = id;
+    return id;
+}
+
+neon::base::Result<void> DiskManager::append_entry(
+    TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone)
+{
+    touch(table);
+    if (comp_size > BLOCK_SIZE - BLOCK_META_SIZE)
+    {
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "compressed page exceeds block payload"));
+    }
+
+    auto fits = [&](uint32_t id) {
+        if (id >= table.blocks.size())
+        {
+            return false;
+        }
+        return block_has_space(table.blocks[id], comp_size);
+    };
+
+    uint32_t block_id = table.header.open_block;
+    if (!fits(block_id))
+    {
+        if (block_id < table.blocks.size() && table.blocks[block_id].flags == BLOCK_OPEN)
+        {
+            table.blocks[block_id].flags = BLOCK_SEALED;
+            table.block_dirty[block_id] = 1;
+        }
+        auto allocated = alloc_block(table);
+        if (!allocated)
+        {
+            return std::unexpected(allocated.error());
+        }
+        block_id = allocated.value();
+    }
+
+    BlockMeta & meta = table.blocks[block_id];
+    PageEntry & entry = meta.entries[meta.page_count];
+    entry.page_id = page_id;
+    entry.offset = meta.payload_end;
+    entry.comp_size = comp_size;
+    entry.flags = tombstone ? ENTRY_TOMBSTONE : ENTRY_DATA;
+    entry.gen = table.txn_gen;
+
+    if (comp_size > 0)
+    {
+        PendingWrite pending;
+        pending.offset = block_file_offset(block_id) + entry.offset;
+        pending.bytes.assign(comp, comp + comp_size);
+        table.pending_pages[page_id] = pending.bytes;
+        table.pending_io.push_back(std::move(pending));
+        meta.payload_end += comp_size;
+    }
+    else
+    {
+        table.pending_pages.erase(page_id);
+    }
+    meta.page_count++;
+    if (!block_has_space(meta, 1))
+    {
+        meta.flags = BLOCK_SEALED;
+        if (table.header.open_block == block_id)
+        {
+            table.header.open_block = NO_BLOCK;
+        }
+    }
+    table.block_dirty[block_id] = 1;
+
+    PageLoc loc;
+    loc.block_id = block_id;
+    loc.offset = entry.offset;
+    loc.comp_size = comp_size;
+    loc.gen = table.txn_gen;
+    loc.tombstone = tombstone;
+    table.overlay[page_id] = loc;
     return {};
 }
 
 neon::base::Result<void> DiskManager::write_page(const std::string & table_name, page_id_t page_id, const char * src)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    ensure_file_exists(table_name);
-
-    std::string path = table_file_path(table_name);
-    // Open in read+write mode to avoid truncation
-    std::fstream fs(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!fs.is_open())
+    TableState * table = find_table(table_name);
+    if (table == nullptr)
     {
-        return std::unexpected(
-            neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to open table file for writing: " + path));
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
+    }
+    auto comp = compress_page(src);
+    if (!comp)
+    {
+        return std::unexpected(comp.error());
     }
 
-    auto offset = static_cast<std::streamoff>((page_id - 1)) * PAGE_SIZE;
-    fs.seekp(offset);
-    fs.write(src, PAGE_SIZE);
-    fs.flush();
+    bool own = false;
+    if (!in_txn_)
+    {
+        in_txn_ = true;
+        own = true;
+    }
+    auto appended = append_entry(*table, page_id, comp->data(), static_cast<uint32_t>(comp->size()), false);
+    if (!appended)
+    {
+        if (own)
+        {
+            abort_unlocked();
+        }
+        return appended;
+    }
+    if (own)
+    {
+        commit_unlocked();
+    }
     return {};
 }
 
 neon::base::Result<page_id_t> DiskManager::allocate_page(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    ensure_file_exists(table_name);
-
-    auto it = next_page_ids_.find(table_name);
-    if (it == next_page_ids_.end())
+    TableState * table = find_table(table_name);
+    if (table == nullptr)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table not tracked: " + table_name));
+        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
     }
-
-    page_id_t new_page_id = it->second;
-    it->second++;
-
-    // Extend the file by writing a zero page
-    std::string path = table_file_path(table_name);
-    std::fstream fs(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!fs.is_open())
+    if (in_txn_)
     {
-        return std::unexpected(
-            neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to open table file for allocation: " + path));
+        touch(*table);
     }
-
-    auto offset = static_cast<std::streamoff>((new_page_id - 1)) * PAGE_SIZE;
-    fs.seekp(offset);
-    char zero_page[PAGE_SIZE] = {};
-    fs.write(zero_page, PAGE_SIZE);
-    fs.flush();
-
-    return new_page_id;
+    page_id_t id = table->header.next_page_id++;
+    return id;
 }
 
 page_id_t DiskManager::page_count(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::string path = table_file_path(table_name);
-
-    if (!std::filesystem::exists(path))
+    const TableState * table = find_table(table_name);
+    if (table == nullptr || table->header.next_page_id == 0)
     {
         return 0;
     }
-
-    auto file_size = std::filesystem::file_size(path);
-    return static_cast<page_id_t>(file_size / PAGE_SIZE);
+    return table->header.next_page_id - 1;
 }
 
 bool DiskManager::table_file_exists(const std::string & table_name) const
 {
     return std::filesystem::exists(table_file_path(table_name));
+}
+
+bool DiskManager::begin_txn()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (in_txn_)
+    {
+        return false;
+    }
+    in_txn_ = true;
+    return true;
+}
+
+bool DiskManager::in_txn() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return in_txn_;
+}
+
+void DiskManager::commit_txn()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    commit_unlocked();
+}
+
+void DiskManager::abort_txn()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    abort_unlocked();
+}
+
+void DiskManager::retire_page(const std::string & table_name, page_id_t page_id)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    TableState * table = find_table(table_name);
+    if (table == nullptr)
+    {
+        return;
+    }
+    const PageLoc * loc = lookup(*table, page_id);
+    if (loc == nullptr || loc->tombstone)
+    {
+        return;
+    }
+    bool own = false;
+    if (!in_txn_)
+    {
+        in_txn_ = true;
+        own = true;
+    }
+    auto appended = append_entry(*table, page_id, nullptr, 0, true);
+    if (!appended)
+    {
+        if (own)
+        {
+            abort_unlocked();
+        }
+        return;
+    }
+    if (own)
+    {
+        commit_unlocked();
+    }
+}
+
+neon::base::Result<void> DiskManager::flush_durable(TableState & table)
+{
+    std::vector<IoRing::Write> writes;
+    writes.reserve(table.pending_io.size() + table.blocks.size() + 1);
+    for (const PendingWrite & pending : table.pending_io)
+    {
+        if (pending.bytes.empty())
+        {
+            continue;
+        }
+        writes.push_back(IoRing::Write{pending.bytes.data(), static_cast<uint32_t>(pending.bytes.size()), pending.offset});
+    }
+    for (uint32_t id = 0; id < table.blocks.size(); ++id)
+    {
+        if (id < table.block_dirty.size() && table.block_dirty[id])
+        {
+            writes.push_back(IoRing::Write{&table.blocks[id], static_cast<uint32_t>(sizeof(BlockMeta)), block_file_offset(id)});
+        }
+    }
+    std::memset(table.header_buf, 0, FILE_HEADER_SIZE);
+    std::memcpy(table.header_buf, &table.header, sizeof(FileHeader));
+    writes.push_back(IoRing::Write{table.header_buf, static_cast<uint32_t>(sizeof(FileHeader)), 0});
+
+    bool data_sync = !table.grew;
+    auto synced = io_->sync_writes(table.fd, writes.data(), writes.size(), data_sync);
+    if (!synced)
+    {
+        return synced;
+    }
+    table.pending_io.clear();
+    table.pending_pages.clear();
+    table.grew = false;
+    for (uint8_t & dirty : table.block_dirty)
+    {
+        dirty = 0;
+    }
+    return {};
+}
+
+neon::base::Result<void> DiskManager::publish_table(TableState & table)
+{
+    table.header.committed_gen = table.txn_gen == 0 ? table.header.committed_gen : table.txn_gen;
+    auto flushed = flush_durable(table);
+    if (!flushed)
+    {
+        return flushed;
+    }
+    for (const auto & [pid, loc] : table.overlay)
+    {
+        table.committed[pid] = loc;
+    }
+    table.overlay.clear();
+    table.participating = false;
+    table.txn_gen = 0;
+    return {};
+}
+
+void DiskManager::commit_unlocked()
+{
+    if (!in_txn_)
+    {
+        return;
+    }
+    std::vector<TableState *> published;
+    for (auto & [name, table] : tables_)
+    {
+        if (!table.participating)
+        {
+            continue;
+        }
+        auto result = publish_table(table);
+        if (!result)
+        {
+            spdlog::error("DiskManager::commit: {}", result.error().error_message);
+            throw std::runtime_error(result.error().error_message);
+        }
+        published.push_back(&table);
+    }
+    in_txn_ = false;
+    if (!in_gc_)
+    {
+        for (TableState * table : published)
+        {
+            maybe_gc(*table);
+        }
+    }
+}
+
+void DiskManager::abort_table(TableState & table)
+{
+    if (!table.participating)
+    {
+        return;
+    }
+    off_t bytes = static_cast<off_t>(FILE_HEADER_SIZE) + static_cast<off_t>(table.snap.block_count) * BLOCK_SIZE;
+    if (bytes < FILE_HEADER_SIZE)
+    {
+        bytes = FILE_HEADER_SIZE;
+    }
+    ::ftruncate(table.fd, bytes);
+    table.header.block_count = table.snap.block_count;
+    table.header.next_page_id = table.snap.next_page_id;
+    table.header.open_block = table.snap.open_block;
+    table.blocks = table.snap.blocks;
+    table.block_dirty.assign(table.blocks.size(), 0);
+    table.free_blocks = table.snap.free_blocks;
+    table.overlay.clear();
+    table.pending_io.clear();
+    table.pending_pages.clear();
+    table.grew = false;
+    table.participating = false;
+    table.txn_gen = 0;
+}
+
+void DiskManager::abort_unlocked()
+{
+    if (!in_txn_)
+    {
+        return;
+    }
+    for (auto & [name, table] : tables_)
+    {
+        abort_table(table);
+    }
+    in_txn_ = false;
+}
+
+uint64_t DiskManager::dead_bytes(const TableState & table) const
+{
+    uint64_t used = 0;
+    for (const BlockMeta & meta : table.blocks)
+    {
+        if (meta.flags == BLOCK_FREE || meta.payload_end <= BLOCK_META_SIZE)
+        {
+            continue;
+        }
+        used += meta.payload_end - BLOCK_META_SIZE;
+    }
+    uint64_t live = 0;
+    auto add_live = [&](const std::unordered_map<page_id_t, PageLoc> & map) {
+        for (const auto & [pid, loc] : map)
+        {
+            if (!loc.tombstone)
+            {
+                live += loc.comp_size;
+            }
+        }
+    };
+    add_live(table.committed);
+    for (const auto & [pid, loc] : table.overlay)
+    {
+        if (auto it = table.committed.find(pid); it != table.committed.end() && !it->second.tombstone)
+        {
+            if (live >= it->second.comp_size)
+            {
+                live -= it->second.comp_size;
+            }
+        }
+        if (!loc.tombstone)
+        {
+            live += loc.comp_size;
+        }
+    }
+    return used > live ? used - live : 0;
+}
+
+void DiskManager::maybe_gc(TableState & table)
+{
+    if (in_txn_ || in_gc_)
+    {
+        return;
+    }
+    if (dead_bytes(table) < GC_WASTE_THRESHOLD)
+    {
+        return;
+    }
+    in_gc_ = true;
+    auto result = gc_table(table);
+    in_gc_ = false;
+    if (!result)
+    {
+        spdlog::error("DiskManager::gc: {}", result.error().error_message);
+    }
+}
+
+neon::base::Result<void> DiskManager::gc_table(TableState & table)
+{
+    struct Live
+    {
+        page_id_t page_id = INVALID_PAGE_ID;
+        std::vector<char> bytes;
+    };
+    std::vector<Live> lives;
+    lives.reserve(table.committed.size());
+    for (const auto & [pid, loc] : table.committed)
+    {
+        if (loc.tombstone || loc.comp_size == 0)
+        {
+            continue;
+        }
+        Live live;
+        live.page_id = pid;
+        live.bytes.resize(loc.comp_size);
+        uint64_t off = block_file_offset(loc.block_id) + loc.offset;
+        auto read = io_->read_at(table.fd, live.bytes.data(), loc.comp_size, off);
+        if (!read)
+        {
+            return read;
+        }
+        lives.push_back(std::move(live));
+    }
+
+    std::unordered_set<uint32_t> sources;
+    for (uint32_t id = 0; id < table.blocks.size(); ++id)
+    {
+        if (table.blocks[id].flags != BLOCK_FREE)
+        {
+            sources.insert(id);
+        }
+    }
+
+    in_txn_ = true;
+    touch(table);
+    table.header.open_block = NO_BLOCK;
+    for (const Live & live : lives)
+    {
+        auto appended = append_entry(table, live.page_id, live.bytes.data(), static_cast<uint32_t>(live.bytes.size()), false);
+        if (!appended)
+        {
+            abort_unlocked();
+            return appended;
+        }
+    }
+
+    std::unordered_set<uint32_t> kept;
+    for (const auto & [pid, loc] : table.overlay)
+    {
+        kept.insert(loc.block_id);
+    }
+    auto published = publish_table(table);
+    in_txn_ = false;
+    if (!published)
+    {
+        return published;
+    }
+
+    for (auto it = table.committed.begin(); it != table.committed.end();)
+    {
+        if (it->second.tombstone || sources.contains(it->second.block_id))
+        {
+            it = table.committed.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    for (uint32_t id : sources)
+    {
+        if (kept.contains(id))
+        {
+            continue;
+        }
+        BlockMeta meta{};
+        meta.magic = BLOCK_MAGIC;
+        meta.block_id = id;
+        meta.flags = BLOCK_FREE;
+        meta.payload_end = BLOCK_META_SIZE;
+        table.blocks[id] = meta;
+        table.block_dirty[id] = 1;
+        table.free_blocks.push_back(id);
+        auto written = write_block_meta(table, id);
+        if (!written)
+        {
+            return written;
+        }
+    }
+    if (table.header.open_block < table.blocks.size() && sources.contains(table.header.open_block) && !kept.contains(table.header.open_block))
+    {
+        table.header.open_block = NO_BLOCK;
+    }
+    auto header = write_header(table);
+    if (!header)
+    {
+        return header;
+    }
+    spdlog::info("DiskManager::gc reclaimed {} blocks, live pages {}", sources.size(), table.committed.size());
+    return io_->fsync(table.fd);
 }
 
 } // namespace neon::storage

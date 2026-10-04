@@ -59,13 +59,13 @@ Schema make_test_schema()
     return schema;
 }
 
-Row make_row(int32_t id, const std::string & name, int32_t age)
+Tuple make_row(const Schema & schema, int32_t id, const std::string & name, int32_t age)
 {
     Row row;
     row.append_value(Value(ValueType::Int32, id));
     row.append_value(Value(ValueType::String, name));
     row.append_value(Value(ValueType::Int32, age));
-    return row;
+    return Tuple::form(schema, row);
 }
 
 } // anonymous namespace
@@ -109,9 +109,9 @@ TEST_F(TableHeapTest, InsertAndScan)
 {
     neon::txn::Transaction txn(1);
 
-    heap->insert_row(&txn, make_row(1, "Alice", 25));
-    heap->insert_row(&txn, make_row(2, "Bob", 30));
-    heap->insert_row(&txn, make_row(3, "Charlie", 35));
+    heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
+    heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
+    heap->insert_row(&txn, make_row(schema, 3, "Charlie", 35));
 
     auto it = heap->iter();
     it.rewind();
@@ -133,9 +133,9 @@ TEST_F(TableHeapTest, DeleteRow)
 {
     neon::txn::Transaction txn(1);
 
-    auto rid1 = heap->insert_row(&txn, make_row(1, "Alice", 25));
-    auto rid2 = heap->insert_row(&txn, make_row(2, "Bob", 30));
-    auto rid3 = heap->insert_row(&txn, make_row(3, "Charlie", 35));
+    auto rid1 = heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
+    auto rid2 = heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
+    auto rid3 = heap->insert_row(&txn, make_row(schema, 3, "Charlie", 35));
 
     EXPECT_TRUE(rid2.is_valid());
     EXPECT_TRUE(heap->delete_row(&txn, rid2));
@@ -157,11 +157,12 @@ TEST_F(TableHeapTest, UpdateRow)
 {
     neon::txn::Transaction txn(1);
 
-    auto rid1 = heap->insert_row(&txn, make_row(1, "Alice", 25));
-    heap->insert_row(&txn, make_row(2, "Bob", 30));
+    auto rid1 = heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
+    heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
 
-    auto updated_rid = heap->update_row(&txn, rid1, make_row(1, "Alice_Updated", 26));
+    auto updated_rid = heap->update_row(&txn, rid1, make_row(schema, 1, "Alice_Updated", 26));
     EXPECT_TRUE(updated_rid.is_valid());
+    EXPECT_NE(updated_rid.page_id, rid1.page_id);
 
     // Scan and verify
     auto it = heap->iter();
@@ -184,14 +185,15 @@ TEST_F(TableHeapTest, UpdateRow)
 TEST_F(TableHeapTest, GetRow)
 {
     neon::txn::Transaction txn(1);
-    auto rid = heap->insert_row(&txn, make_row(42, "TestUser", 99));
+    auto rid = heap->insert_row(&txn, make_row(schema, 42, "TestUser", 99));
     ASSERT_TRUE(rid.is_valid());
 
-    auto opt_row = heap->get_row(rid);
-    ASSERT_TRUE(opt_row.has_value());
-    EXPECT_EQ(opt_row->values_[0].i32(), 42);
-    EXPECT_EQ(opt_row->values_[1].string_ref(), "TestUser");
-    EXPECT_EQ(opt_row->values_[2].i32(), 99);
+    auto opt_tuple = heap->get_row(rid);
+    ASSERT_TRUE(opt_tuple.has_value());
+    auto row = opt_tuple->deform(schema);
+    EXPECT_EQ(row.values_[0].i32(), 42);
+    EXPECT_EQ(row.values_[1].string_ref(), "TestUser");
+    EXPECT_EQ(row.values_[2].i32(), 99);
 }
 
 TEST_F(TableHeapTest, MultiPageInsert)
@@ -204,7 +206,7 @@ TEST_F(TableHeapTest, MultiPageInsert)
     {
         std::string big_name(200, 'A' + (i % 26));
         big_name += "_" + std::to_string(i);
-        auto rid = heap->insert_row(&txn, make_row(i, big_name, i * 10));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, big_name, i * 10));
         ASSERT_TRUE(rid.is_valid()) << "Failed to insert row " << i;
     }
 
@@ -270,7 +272,7 @@ TEST_F(TableHeapTest, RandomOrderInsert)
     for (int id : ids)
     {
         std::string name = "user_" + std::to_string(id);
-        auto rid = heap->insert_row(&txn, make_row(id, name, id * 10));
+        auto rid = heap->insert_row(&txn, make_row(schema, id, name, id * 10));
         ASSERT_TRUE(rid.is_valid()) << "Failed to insert id=" << id;
     }
 
@@ -299,7 +301,7 @@ TEST_F(TableHeapTest, LargeScaleInsert)
     for (int i = 0; i < NUM_ROWS; ++i)
     {
         std::string name = "large_scale_" + std::to_string(i);
-        auto rid = heap->insert_row(&txn, make_row(i, name, i));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, name, i));
         ASSERT_TRUE(rid.is_valid()) << "Failed to insert row " << i;
     }
 
@@ -348,7 +350,7 @@ TEST_F(TableHeapTest, DeleteAndReinsert)
     std::vector<RowId> rids(NUM_ROWS);
     for (int i = 0; i < NUM_ROWS; ++i)
     {
-        rids[i] = heap->insert_row(&txn, make_row(i, "original", i));
+        rids[i] = heap->insert_row(&txn, make_row(schema, i, "original", i));
         ASSERT_TRUE(rids[i].is_valid());
     }
 
@@ -362,7 +364,7 @@ TEST_F(TableHeapTest, DeleteAndReinsert)
     neon::txn::Transaction txn2(2);
     for (int i = 0; i < NUM_ROWS; i += 2)
     {
-        auto rid = heap->insert_row(&txn2, make_row(i, "reinserted", i * 100));
+        auto rid = heap->insert_row(&txn2, make_row(schema, i, "reinserted", i * 100));
         ASSERT_TRUE(rid.is_valid());
     }
 
@@ -399,7 +401,7 @@ TEST_F(TableHeapTest, UpdateWithPKChange)
     // Insert rows with PK 1..10
     for (int i = 1; i <= 10; ++i)
     {
-        heap->insert_row(&txn, make_row(i, "name_" + std::to_string(i), i));
+        heap->insert_row(&txn, make_row(schema, i, "name_" + std::to_string(i), i));
     }
 
     // Update row with PK=5 to PK=15 (PK change triggers delete+insert)
@@ -417,7 +419,7 @@ TEST_F(TableHeapTest, UpdateWithPKChange)
     }
     ASSERT_TRUE(rid5.is_valid());
 
-    auto new_rid = heap->update_row(&txn, rid5, make_row(15, "changed_pk", 999));
+    auto new_rid = heap->update_row(&txn, rid5, make_row(schema, 15, "changed_pk", 999));
     EXPECT_TRUE(new_rid.is_valid());
 
     // PK=5 should be gone, PK=15 should exist
@@ -453,7 +455,7 @@ TEST_F(TableHeapTest, MixedOperations)
     constexpr int NUM_ROWS = 200;
     for (int i = 0; i < NUM_ROWS; ++i)
     {
-        auto rid = heap->insert_row(&txn, make_row(i, "mixed", i));
+        auto rid = heap->insert_row(&txn, make_row(schema, i, "mixed", i));
         ASSERT_TRUE(rid.is_valid());
     }
 
@@ -477,7 +479,7 @@ TEST_F(TableHeapTest, MixedOperations)
                     {
                         RowId rid = it.current_row_id();
                         heap->delete_row(&op_txn, rid);
-                        heap->insert_row(&op_txn, make_row(target, "reinsert", target * 100));
+                        heap->insert_row(&op_txn, make_row(schema, target, "reinsert", target * 100));
                         break;
                     }
                     it.next();
@@ -492,7 +494,7 @@ TEST_F(TableHeapTest, MixedOperations)
                     if (it.current_row().values_[0].i32() == target)
                     {
                         RowId rid = it.current_row_id();
-                        heap->update_row(&op_txn, rid, make_row(target, "updated", target * 1000));
+                        heap->update_row(&op_txn, rid, make_row(schema, target, "updated", target * 1000));
                         break;
                     }
                     it.next();

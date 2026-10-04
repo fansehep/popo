@@ -95,6 +95,60 @@ TEST_F(SqlExecTest, DeleteWhere)
     EXPECT_EQ(scanned.result.rows[1]->values_[0].i32(), 3);
 }
 
+TEST_F(SqlExecTest, SecondaryIndexAndPkRange)
+{
+    must("CREATE TABLE t (id INT PRIMARY KEY, k INT, name VARCHAR(16))");
+    must("CREATE INDEX idx_k ON t (k)");
+    must("INSERT INTO t VALUES (1, 10, 'a'), (2, 20, 'b'), (3, 10, 'c'), (4, 30, 'd')");
+
+    auto both = must("SELECT name FROM t WHERE k = 10");
+    ASSERT_EQ(both.result.rows.size(), 2u);
+    EXPECT_EQ(both.result.rows[0]->values_[0].string_ref(), "a");
+    EXPECT_EQ(both.result.rows[1]->values_[0].string_ref(), "c");
+
+    auto ranged = must("SELECT id FROM t WHERE id >= 2 AND id <= 3");
+    ASSERT_EQ(ranged.result.rows.size(), 2u);
+    EXPECT_EQ(ranged.result.rows[0]->values_[0].i32(), 2);
+    EXPECT_EQ(ranged.result.rows[1]->values_[0].i32(), 3);
+
+    must("UPDATE t SET k = 15 WHERE id = 1");
+    auto after = must("SELECT name FROM t WHERE k = 10");
+    ASSERT_EQ(after.result.rows.size(), 1u);
+    EXPECT_EQ(after.result.rows[0]->values_[0].string_ref(), "c");
+    auto moved = must("SELECT name FROM t WHERE k = 15");
+    ASSERT_EQ(moved.result.rows.size(), 1u);
+    EXPECT_EQ(moved.result.rows[0]->values_[0].string_ref(), "a");
+
+    must("DELETE FROM t WHERE id = 3");
+    auto gone = must("SELECT name FROM t WHERE k = 10");
+    EXPECT_TRUE(gone.result.rows.empty());
+
+    for (int i = 0; i < 20; ++i)
+    {
+        auto point = must("SELECT name FROM t WHERE id = 2");
+        ASSERT_EQ(point.result.rows.size(), 1u);
+        EXPECT_EQ(point.result.rows[0]->values_[0].string_ref(), "b");
+    }
+}
+
+TEST_F(SqlExecTest, AggregateFilterAndJoin)
+{
+    must("CREATE TABLE lineitem (id INT PRIMARY KEY, order_id INT, quantity INT, price INT, discount INT)");
+    must("CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, priority INT)");
+    must("INSERT INTO orders VALUES (1, 10, 1), (2, 11, 2), (3, 12, 1)");
+    must("INSERT INTO lineitem VALUES (1, 1, 5, 100, 1), (2, 1, 9, 200, 4), (3, 2, 3, 50, 0), (4, 3, 8, 80, 3)");
+
+    auto filtered = must("SELECT SUM(price) FROM lineitem WHERE discount > 2");
+    ASSERT_EQ(filtered.result.rows.size(), 1u);
+    EXPECT_EQ(filtered.result.rows[0]->values_[0].i64(), 280);
+
+    auto joined = must("SELECT lineitem.id FROM lineitem JOIN orders ON lineitem.order_id = orders.id WHERE orders.priority = 1");
+    ASSERT_EQ(joined.result.rows.size(), 3u);
+    EXPECT_EQ(joined.result.rows[0]->values_[0].i64(), 1);
+    EXPECT_EQ(joined.result.rows[1]->values_[0].i64(), 2);
+    EXPECT_EQ(joined.result.rows[2]->values_[0].i64(), 4);
+}
+
 TEST_F(SqlExecTest, CountStar)
 {
     must("CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(16))");

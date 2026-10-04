@@ -22,6 +22,7 @@ enum class PlanNodeType
     Update,
     Delete,
     CreateTable,
+    CreateIndex,
     DropTable,
     ShowTables,
     Describe,
@@ -137,6 +138,15 @@ struct CreateTableNode : PlanNode
     std::string table_name;
     std::vector<neon::parser::ColumnDef> columns;
     CreateTableNode() { type = PlanNodeType::CreateTable; }
+};
+
+struct CreateIndexNode : PlanNode
+{
+    bool unique = false;
+    std::string index_name;
+    std::string table_name;
+    std::string column_name;
+    CreateIndexNode() { type = PlanNodeType::CreateIndex; }
 };
 
 // Drop table DDL

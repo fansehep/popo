@@ -42,6 +42,7 @@ private:
     void compile_update(const neon::planner::UpdateNode & node);
     void compile_delete(const neon::planner::DeleteNode & node);
     void compile_create_table(const neon::planner::CreateTableNode & node);
+    void compile_create_index(const neon::planner::CreateIndexNode & node);
     void compile_drop_table(const neon::planner::DropTableNode & node);
     void compile_show_tables(const neon::planner::ShowTablesNode & node);
     void compile_describe(const neon::planner::DescribeNode & node);
@@ -57,6 +58,17 @@ private:
     // Returns {cursor_id, pk_col_idx, literal_value} if matched, nullopt otherwise.
     std::optional<std::tuple<int32_t, int32_t, neon::type::Value>>
     detect_pk_equality(const neon::parser::ExprPtr & where, int32_t cursor_id);
+
+    struct KeyBounds
+    {
+        std::optional<neon::type::Value> lower;
+        bool lower_inclusive = true;
+        std::optional<neon::type::Value> upper;
+        bool upper_inclusive = true;
+    };
+    std::optional<KeyBounds> detect_pk_bounds(const neon::parser::ExprPtr & where, int32_t cursor_id);
+    // Secondary index equality. pair is (index ordinal, literal).
+    std::optional<std::pair<int32_t, neon::type::Value>> detect_index_equality(const neon::parser::ExprPtr & where, int32_t cursor_id);
 
     int32_t alloc_cursor() { return next_cursor_id_++; }
     int32_t alloc_sorter() { return next_sorter_id_++; }

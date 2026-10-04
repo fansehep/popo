@@ -3,6 +3,7 @@
 #include <cmath>
 #include <variant>
 #include "parser/ast.h"
+#include "src/storage/row_serializer.h"
 #include "src/storage/storage_engine.h"
 #include "src/storage/table_heap.h"
 
@@ -269,6 +270,27 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Column opcode: invalid cursor"));
                 }
                 auto & cursor = it->second;
+                if (!cursor.row_materialized && !cursor.is_write)
+                {
+                    if (cursor.iter && cursor.iter->valid())
+                    {
+                        auto [data, len] = cursor.iter->current_bytes();
+                        push(neon::storage::RowSerializer::read_column(data, len, cursor.schema, inst.operand2));
+                        pc_++;
+                        break;
+                    }
+                    if (cursor.heap && cursor.has_current)
+                    {
+                        auto val = cursor.heap->read_column(cursor.current_rid, inst.operand2);
+                        if (!val.has_value())
+                        {
+                            return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Column opcode: row missing"));
+                        }
+                        push(*val);
+                        pc_++;
+                        break;
+                    }
+                }
                 if (!cursor.row_materialized)
                 {
                     if (cursor.iter && cursor.iter->valid())
@@ -494,6 +516,33 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     break;
                 }
                 auto & cursor = it->second;
+                if (cursor.index_scan)
+                {
+                    cursor.index_pos++;
+                    if (cursor.index_pos < cursor.index_hits.size() && cursor.heap)
+                    {
+                        cursor.current_rid = cursor.index_hits[cursor.index_pos];
+                        auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
+                        if (!tuple_opt)
+                        {
+                            cursor.has_current = false;
+                            cursor.index_scan = false;
+                            pc_++;
+                            break;
+                        }
+                        cursor.current_row_cache = tuple_opt->deform(cursor.schema);
+                        cursor.row_materialized = true;
+                        cursor.has_current = true;
+                        pc_ = inst.operand2;
+                    }
+                    else
+                    {
+                        cursor.has_current = false;
+                        cursor.index_scan = false;
+                        pc_++;
+                    }
+                    break;
+                }
                 cursor.iter->next();
                 if (cursor.iter->valid())
                 {
@@ -628,6 +677,120 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 break;
             }
 
+            case OpCode::SeekGe: {
+                auto key = pop();
+                auto it = cursors_.find(inst.operand1);
+                if (it == cursors_.end() || !it->second.iter)
+                {
+                    pc_ = inst.operand2;
+                    break;
+                }
+                auto & cursor = it->second;
+                cursor.index_scan = false;
+                cursor.iter->seek_ge(key);
+                if (!cursor.iter->valid())
+                {
+                    cursor.has_current = false;
+                    pc_ = inst.operand2;
+                }
+                else
+                {
+                    cursor.current_rid = cursor.iter->current_row_id();
+                    cursor.row_materialized = false;
+                    cursor.has_current = true;
+                    pc_++;
+                }
+                break;
+            }
+
+            case OpCode::SeekIndex: {
+                auto key = pop();
+                auto it = cursors_.find(inst.operand1);
+                if (it == cursors_.end() || !it->second.heap)
+                {
+                    pc_ = inst.operand2;
+                    break;
+                }
+                auto & cursor = it->second;
+                auto pks = cursor.heap->lookup_index(static_cast<size_t>(inst.operand3), key);
+                cursor.index_hits.clear();
+                cursor.index_hits.reserve(pks.size());
+                for (const auto & pk : pks)
+                {
+                    auto rid = cursor.heap->lookup_pk(pk);
+                    if (rid)
+                    {
+                        cursor.index_hits.push_back(*rid);
+                    }
+                }
+                if (cursor.index_hits.empty())
+                {
+                    cursor.index_scan = false;
+                    cursor.has_current = false;
+                    pc_ = inst.operand2;
+                    break;
+                }
+                cursor.index_scan = true;
+                cursor.index_pos = 0;
+                cursor.current_rid = cursor.index_hits[0];
+                auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
+                if (!tuple_opt)
+                {
+                    cursor.has_current = false;
+                    cursor.index_scan = false;
+                    pc_ = inst.operand2;
+                    break;
+                }
+                cursor.current_row_cache = tuple_opt->deform(cursor.schema);
+                cursor.row_materialized = true;
+                cursor.has_current = true;
+                pc_++;
+                break;
+            }
+
+            case OpCode::CreateIndex: {
+                bool unique = inst.operand1 < 0;
+                int32_t name_idx = unique ? -inst.operand1 - 1 : inst.operand1;
+                std::string index_name = std::get<std::string>(program.constants[name_idx]);
+                std::string table_name = std::get<std::string>(program.constants[inst.operand2]);
+                std::string column_name = std::get<std::string>(program.constants[inst.operand3]);
+                auto qr = schema_mgr_.query_table(table_name);
+                if (!qr || !*qr)
+                {
+                    return error(neon::base::Error(static_cast<int32_t>(neon::base::TableNotFound), "Table not found: " + table_name));
+                }
+                int32_t col = -1;
+                const auto & columns = (*qr)->columns_;
+                for (size_t i = 0; i < columns.size(); ++i)
+                {
+                    if (columns[i].column_name_ == column_name)
+                    {
+                        col = static_cast<int32_t>(i);
+                        break;
+                    }
+                }
+                if (col < 0)
+                {
+                    return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Column not found: " + column_name));
+                }
+                auto created = schema_mgr_.create_index(table_name, index_name, {col}, unique);
+                if (!created)
+                {
+                    return error(created.error());
+                }
+                try
+                {
+                    engine_.create_index(table_name, index_name, col, unique);
+                }
+                catch (const std::exception & ex)
+                {
+                    return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), ex.what()));
+                }
+                result_.message = "Index created";
+                pc_++;
+                break;
+            }
+
             case OpCode::SeekByPk: {
                 auto pk_val = pop();
                 auto it = cursors_.find(inst.operand1);
@@ -645,16 +808,20 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     break;
                 }
                 cursor.current_rid = rid_opt.value();
-                auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
-                if (!tuple_opt.has_value())
-                {
-                    cursor.has_current = false;
-                    pc_ = inst.operand2;
-                    break;
-                }
-                cursor.current_row_cache = tuple_opt->deform(cursor.schema);
-                cursor.row_materialized = true;
                 cursor.has_current = true;
+                cursor.row_materialized = false;
+                if (cursor.is_write)
+                {
+                    auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
+                    if (!tuple_opt.has_value())
+                    {
+                        cursor.has_current = false;
+                        pc_ = inst.operand2;
+                        break;
+                    }
+                    cursor.current_row_cache = tuple_opt->deform(cursor.schema);
+                    cursor.row_materialized = true;
+                }
                 pc_++;
                 break;
             }

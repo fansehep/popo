@@ -13,10 +13,10 @@ namespace neon::storage
 // after the meta. Payloads are never overwritten in place. A later write of the
 // same logical page appends a new image; the previous image becomes garbage.
 //
-// Atomicity matches SQLite's single writer: one transaction, commit publishes
-// a generation in the file header, abort rewinds the block tail. There is no
-// row undo log. A crash before the header generation is published keeps the
-// previous committed generation.
+// Atomicity matches SQLite's single writer: one transaction, commit appends
+// one record to commit.wal and fsyncs that file once. Table files are updated
+// after the record is durable. Abort rewinds the block tail in memory. A crash
+// before the commit record is durable keeps the previous committed generation.
 
 constexpr uint32_t BLOCK_SIZE = 1u << 20;
 constexpr uint32_t FILE_HEADER_SIZE = 4096;

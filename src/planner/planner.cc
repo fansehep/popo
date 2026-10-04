@@ -107,6 +107,8 @@ neon::base::Result<PlanNodePtr> Planner::plan(const neon::parser::StmtPtr & stmt
                 return plan_insert(dynamic_cast<const neon::parser::InsertStatement &>(*stmt));
             case neon::parser::StmtType::CreateTable:
                 return plan_create_table(dynamic_cast<const neon::parser::CreateTableStatement &>(*stmt));
+            case neon::parser::StmtType::CreateIndex:
+                return plan_create_index(dynamic_cast<const neon::parser::CreateIndexStatement &>(*stmt));
             case neon::parser::StmtType::Update:
                 return plan_update(dynamic_cast<const neon::parser::UpdateStatement &>(*stmt));
             case neon::parser::StmtType::Delete:
@@ -274,6 +276,20 @@ PlanNodePtr Planner::plan_create_table(const neon::parser::CreateTableStatement 
     auto node = std::make_shared<CreateTableNode>();
     node->table_name = stmt.table_name;
     node->columns = stmt.columns;
+    return node;
+}
+
+PlanNodePtr Planner::plan_create_index(const neon::parser::CreateIndexStatement & stmt)
+{
+    if (stmt.columns.size() != 1)
+    {
+        throw std::runtime_error("only a single-column secondary index is supported");
+    }
+    auto node = std::make_shared<CreateIndexNode>();
+    node->unique = stmt.unique;
+    node->index_name = stmt.index_name;
+    node->table_name = stmt.table_name;
+    node->column_name = stmt.columns[0];
     return node;
 }
 

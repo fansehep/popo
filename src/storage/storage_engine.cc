@@ -42,11 +42,12 @@ void StorageEngine::shutdown()
         {
             buffer_pool_->invalidate_all();
         }
-        for (const auto & [name, root] : root_snap_)
+        for (const auto & [name, snap] : root_snap_)
         {
             if (auto it = table_heaps_.find(name); it != table_heaps_.end())
             {
-                it->second->set_root_page_id(root);
+                it->second->set_root_page_id(snap.root);
+                it->second->set_index_roots(snap.index_roots);
             }
         }
         root_snap_.clear();
@@ -102,6 +103,34 @@ void StorageEngine::create_table(const std::string & table_name, const neon::cat
     spdlog::info("StorageEngine::create_table: created table {}", table_name);
 }
 
+void StorageEngine::create_index(const std::string & table_name, const std::string & index_name, int32_t column, bool unique)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = table_heaps_.find(table_name);
+    if (it == table_heaps_.end())
+    {
+        throw std::runtime_error("create index: table not found");
+    }
+    const auto & base = it->second->schema();
+    if (base.primary_key_col_idx_ < 0 || column < 0 || column >= static_cast<int32_t>(base.columns_.size()))
+    {
+        throw std::runtime_error("create index: bad column");
+    }
+    neon::catalog::Schema index_schema;
+    index_schema.table_name_ = base.table_name_;
+    neon::catalog::Column key = base.columns_[static_cast<size_t>(column)];
+    key.column_name_ = "k";
+    key.is_primary_key_ = true;
+    neon::catalog::Column pk = base.columns_[static_cast<size_t>(base.primary_key_col_idx_)];
+    pk.column_name_ = "pk";
+    pk.is_primary_key_ = false;
+    index_schema.columns_ = {key, pk};
+    index_schema.primary_key_col_idx_ = 0;
+    auto tree = std::make_unique<TableHeap>(base.table_name_, buffer_pool_.get(), redo_log_.get(), index_schema);
+    tree->set_sort_width(2);
+    it->second->attach_index(index_name, column, unique, std::move(tree));
+}
+
 void StorageEngine::drop_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -129,7 +158,10 @@ neon::txn::Transaction * StorageEngine::begin_txn()
         root_snap_.clear();
         for (const auto & [name, heap] : table_heaps_)
         {
-            root_snap_[name] = heap->get_root_page_id();
+            RootSnap snap;
+            snap.root = heap->get_root_page_id();
+            snap.index_roots = heap->index_roots();
+            root_snap_[name] = std::move(snap);
         }
     }
     try
@@ -168,11 +200,13 @@ void StorageEngine::abort_txn(neon::txn::Transaction * txn)
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        for (const auto & [name, root] : root_snap_)
+        for (const auto & [name, snap] : root_snap_)
         {
             if (auto it = table_heaps_.find(name); it != table_heaps_.end())
             {
-                it->second->set_root_page_id(root);
+                it->second->set_root_page_id(snap.root);
+                it->second->set_index_roots(snap.index_roots);
+                it->second->clear_ahi();
             }
         }
         root_snap_.clear();

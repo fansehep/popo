@@ -13,3 +13,7 @@ target_include_directories(sql_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(oltp_bench oltp_bench.cc)
 target_link_libraries(oltp_bench PRIVATE bytecode_lib storage_lib type_lib catalog_lib base_lib parser_lib planner_lib spdlog)
 target_include_directories(oltp_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(olap_bench olap_bench.cc)
+target_link_libraries(olap_bench PRIVATE bytecode_lib storage_lib type_lib catalog_lib base_lib parser_lib planner_lib spdlog)
+target_include_directories(olap_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

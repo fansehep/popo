@@ -66,6 +66,7 @@ enum class TokenType
     Boolean,
     Bool_,
     Unique,
+    Index,
     Default,
     If,
     Exists,

@@ -35,6 +35,7 @@ private:
     StmtPtr parse_select();
     StmtPtr parse_insert();
     StmtPtr parse_create_table();
+    StmtPtr parse_create_index(bool unique);
     StmtPtr parse_update();
     StmtPtr parse_delete();
     StmtPtr parse_drop();

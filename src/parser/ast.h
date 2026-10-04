@@ -180,6 +180,7 @@ enum class StmtType
     Select,
     Insert,
     CreateTable,
+    CreateIndex,
     Update,
     Delete,
     DropTable,
@@ -225,6 +226,15 @@ struct CreateTableStatement : Statement
     std::string table_name;
     std::vector<ColumnDef> columns;
     CreateTableStatement() { type = StmtType::CreateTable; }
+};
+
+struct CreateIndexStatement : Statement
+{
+    bool unique = false;
+    std::string index_name;
+    std::string table_name;
+    std::vector<std::string> columns;
+    CreateIndexStatement() { type = StmtType::CreateIndex; }
 };
 
 struct UpdateStatement : Statement

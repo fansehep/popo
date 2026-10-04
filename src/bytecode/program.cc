@@ -38,12 +38,14 @@ std::string Program::disassemble() const
             case OpCode::Column:
             case OpCode::OpenRead:
             case OpCode::OpenWrite:
+            case OpCode::SeekIndex:
             case OpCode::SortKeyDef:
                 oss << " " << inst.operand1 << " " << inst.operand2;
                 if (inst.operand3 != 0)
                     oss << " " << inst.operand3;
                 break;
             case OpCode::Rewind:
+            case OpCode::SeekGe:
             case OpCode::Next:
             case OpCode::SorterRewind:
             case OpCode::SorterNext:
@@ -67,6 +69,7 @@ std::string Program::disassemble() const
             case OpCode::SorterInsert:
             case OpCode::SorterColumn:
             case OpCode::CreateTable:
+            case OpCode::CreateIndex:
             case OpCode::DropTable:
                 oss << " " << inst.operand1;
                 if (inst.operand2 != 0)

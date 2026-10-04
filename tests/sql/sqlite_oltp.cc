@@ -571,6 +571,7 @@ void run_tpcc()
     must(db, "CREATE TABLE orders (o_id INT PRIMARY KEY, o_d_id INT, o_c_id INT, o_ol_cnt INT)");
     must(db, "CREATE TABLE new_order (no_id INT PRIMARY KEY, no_d_id INT, no_c_id INT)");
     must(db, "CREATE TABLE order_line (ol_id INT PRIMARY KEY, ol_o_id INT, ol_i_id INT, ol_amount INT)");
+    must(db, "CREATE INDEX ol_o_id_idx ON order_line (ol_o_id)");
     must(db, "CREATE TABLE history (h_id INT PRIMARY KEY, h_c_id INT, h_d_id INT, h_amount INT)");
 
     auto t0 = std::chrono::steady_clock::now();

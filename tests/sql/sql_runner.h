@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "src/bytecode/compiler.h"
+#include "src/bytecode/fast_path.h"
 #include "src/bytecode/vm.h"
 #include "src/catalog/schema_mgr.h"
 #include "src/parser/parser.h"
@@ -82,6 +83,12 @@ private:
         SqlResult out;
         try
         {
+            if (auto fast = neon::bytecode::try_point_select(schema_, engine_, sql))
+            {
+                out.result = std::move(*fast);
+                out.ok = true;
+                return out;
+            }
             auto t0 = clock::now();
             neon::parser::Parser parser;
             auto parsed = parser.parse(sql);

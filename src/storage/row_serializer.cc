@@ -70,7 +70,11 @@ std::vector<char> RowSerializer::serialize(const Row & row, const Schema & schem
     uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
 
     uint32_t total_size = serialized_size(row, schema);
-    std::vector<char> buf(total_size, 0);
+    std::vector<char> buf(total_size);
+    if (null_bitmap_bytes > 0)
+    {
+        std::memset(buf.data() + sizeof(uint16_t), 0, null_bitmap_bytes);
+    }
     uint32_t pos = 0;
 
     // Write num_cols
@@ -332,6 +336,144 @@ Row RowSerializer::deserialize(const char * data, uint32_t len, const Schema & s
         }
     }
     return row;
+}
+
+Value RowSerializer::read_column(const char * data, uint32_t len, const Schema & schema, int32_t column)
+{
+    if (data == nullptr || column < 0 || static_cast<size_t>(column) >= schema.columns_.size() || len < sizeof(uint16_t))
+    {
+        return Value();
+    }
+    uint32_t pos = 0;
+    uint16_t num_cols = 0;
+    std::memcpy(&num_cols, data + pos, sizeof(uint16_t));
+    pos += sizeof(uint16_t);
+    uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
+    if (pos + null_bitmap_bytes > len || column >= num_cols)
+    {
+        return Value();
+    }
+    const char * bitmap = data + pos;
+    pos += null_bitmap_bytes;
+
+    for (int32_t i = 0; i <= column; ++i)
+    {
+        bool is_null = (bitmap[i / 8] >> (i % 8)) & 1;
+        if (is_null)
+        {
+            if (i == column)
+            {
+                return Value();
+            }
+            continue;
+        }
+        ValueType type = schema.columns_[static_cast<size_t>(i)].data_type_;
+        if (i != column)
+        {
+            if (type == ValueType::String)
+            {
+                if (pos + sizeof(uint16_t) > len)
+                {
+                    return Value();
+                }
+                uint16_t str_len = 0;
+                std::memcpy(&str_len, data + pos, sizeof(uint16_t));
+                pos += sizeof(uint16_t) + str_len;
+            }
+            else
+            {
+                pos += fixed_type_size(type);
+            }
+            if (pos > len)
+            {
+                return Value();
+            }
+            continue;
+        }
+
+        if (type == ValueType::String)
+        {
+            if (pos + sizeof(uint16_t) > len)
+            {
+                return Value();
+            }
+            uint16_t str_len = 0;
+            std::memcpy(&str_len, data + pos, sizeof(uint16_t));
+            pos += sizeof(uint16_t);
+            if (pos + str_len > len)
+            {
+                return Value();
+            }
+            return Value(ValueType::String, std::string(data + pos, str_len));
+        }
+        uint32_t width = fixed_type_size(type);
+        if (width == 0 || pos + width > len)
+        {
+            return Value();
+        }
+        switch (type)
+        {
+            case ValueType::Bool: {
+                uint8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                return Value(ValueType::Bool, static_cast<bool>(v));
+            }
+            case ValueType::Int8: {
+                int8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                return Value(ValueType::Int8, v);
+            }
+            case ValueType::Uint8:
+            case ValueType::Char: {
+                uint8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                return type == ValueType::Char ? Value(ValueType::Char, static_cast<char>(v)) : Value(ValueType::Uint8, v);
+            }
+            case ValueType::Int16: {
+                int16_t v = 0;
+                std::memcpy(&v, data + pos, 2);
+                return Value(ValueType::Int16, v);
+            }
+            case ValueType::Uint16: {
+                uint16_t v = 0;
+                std::memcpy(&v, data + pos, 2);
+                return Value(ValueType::Uint16, v);
+            }
+            case ValueType::Int32: {
+                int32_t v = 0;
+                std::memcpy(&v, data + pos, 4);
+                return Value(ValueType::Int32, v);
+            }
+            case ValueType::Uint32: {
+                uint32_t v = 0;
+                std::memcpy(&v, data + pos, 4);
+                return Value(ValueType::Uint32, v);
+            }
+            case ValueType::Float32: {
+                float v = 0;
+                std::memcpy(&v, data + pos, 4);
+                return Value(ValueType::Float32, v);
+            }
+            case ValueType::Int64: {
+                int64_t v = 0;
+                std::memcpy(&v, data + pos, 8);
+                return Value(ValueType::Int64, v);
+            }
+            case ValueType::Uint64: {
+                uint64_t v = 0;
+                std::memcpy(&v, data + pos, 8);
+                return Value(ValueType::Uint64, v);
+            }
+            case ValueType::Float64: {
+                double v = 0;
+                std::memcpy(&v, data + pos, 8);
+                return Value(ValueType::Float64, v);
+            }
+            default:
+                return Value();
+        }
+    }
+    return Value();
 }
 
 } // namespace neon::storage

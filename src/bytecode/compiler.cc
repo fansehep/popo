@@ -69,6 +69,9 @@ void Compiler::compile_node(const neon::planner::PlanNodePtr & node)
         case neon::planner::PlanNodeType::CreateTable:
             compile_create_table(static_cast<const neon::planner::CreateTableNode &>(*node));
             break;
+        case neon::planner::PlanNodeType::CreateIndex:
+            compile_create_index(static_cast<const neon::planner::CreateIndexNode &>(*node));
+            break;
         case neon::planner::PlanNodeType::DropTable:
             compile_drop_table(static_cast<const neon::planner::DropTableNode &>(*node));
             break;
@@ -343,6 +346,19 @@ void Compiler::compile_create_table(const neon::planner::CreateTableNode & node)
     program_.emit(OpCode::Halt);
 }
 
+void Compiler::compile_create_index(const neon::planner::CreateIndexNode & node)
+{
+    int32_t name_idx = program_.add_string_constant(node.index_name);
+    int32_t table_idx = program_.add_string_constant(node.table_name);
+    int32_t col_idx = program_.add_string_constant(node.column_name);
+    if (node.unique)
+    {
+        name_idx = -name_idx - 1;
+    }
+    program_.emit(OpCode::CreateIndex, name_idx, table_idx, col_idx);
+    program_.emit(OpCode::Halt);
+}
+
 void Compiler::compile_drop_table(const neon::planner::DropTableNode & node)
 {
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
@@ -559,6 +575,161 @@ Compiler::detect_pk_equality(const neon::parser::ExprPtr & where, int32_t cursor
     return std::make_tuple(cursor_id, pk_idx, lit.value);
 }
 
+namespace
+{
+
+struct ColCmp
+{
+    std::string column;
+    neon::parser::BinaryOpType op = neon::parser::BinaryOpType::Eq;
+    neon::type::Value literal;
+};
+
+std::optional<ColCmp> column_cmp(const neon::parser::ExprPtr & expr)
+{
+    if (!expr || expr->type != neon::parser::ExprType::BinaryOp)
+    {
+        return std::nullopt;
+    }
+    const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*expr);
+    const neon::parser::Expr * left = bin.left.get();
+    const neon::parser::Expr * right = bin.right.get();
+    if (left == nullptr || right == nullptr)
+    {
+        return std::nullopt;
+    }
+    auto flip = [](neon::parser::BinaryOpType op) {
+        using neon::parser::BinaryOpType;
+        switch (op)
+        {
+            case BinaryOpType::Lt:
+                return BinaryOpType::Gt;
+            case BinaryOpType::Le:
+                return BinaryOpType::Ge;
+            case BinaryOpType::Gt:
+                return BinaryOpType::Lt;
+            case BinaryOpType::Ge:
+                return BinaryOpType::Le;
+            default:
+                return op;
+        }
+    };
+    ColCmp out;
+    if (left->type == neon::parser::ExprType::ColumnRef && right->type == neon::parser::ExprType::Literal)
+    {
+        out.column = static_cast<const neon::parser::ColumnRefExpr &>(*left).column_name;
+        out.op = bin.op;
+        out.literal = static_cast<const neon::parser::LiteralExpr &>(*right).value;
+        return out;
+    }
+    if (right->type == neon::parser::ExprType::ColumnRef && left->type == neon::parser::ExprType::Literal)
+    {
+        out.column = static_cast<const neon::parser::ColumnRefExpr &>(*right).column_name;
+        out.op = flip(bin.op);
+        out.literal = static_cast<const neon::parser::LiteralExpr &>(*left).value;
+        return out;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const neon::parser::ExprPtr & where, int32_t cursor_id)
+{
+    auto schema_it = cursor_schemas_.find(cursor_id);
+    if (schema_it == cursor_schemas_.end() || !schema_it->second || schema_it->second->primary_key_col_idx_ < 0)
+    {
+        return std::nullopt;
+    }
+    int32_t pk_idx = schema_it->second->primary_key_col_idx_;
+    KeyBounds bounds;
+    bool any = false;
+    auto absorb = [&](auto && self, const neon::parser::ExprPtr & expr) -> bool {
+        if (!expr)
+        {
+            return false;
+        }
+        if (expr->type == neon::parser::ExprType::BinaryOp)
+        {
+            const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*expr);
+            if (bin.op == neon::parser::BinaryOpType::And)
+            {
+                return self(self, bin.left) && self(self, bin.right);
+            }
+        }
+        auto cmp = column_cmp(expr);
+        if (!cmp || find_column_index(cursor_id, cmp->column) != pk_idx)
+        {
+            return false;
+        }
+        using neon::parser::BinaryOpType;
+        switch (cmp->op)
+        {
+            case BinaryOpType::Gt:
+                if (bounds.lower)
+                    return false;
+                bounds.lower = cmp->literal;
+                bounds.lower_inclusive = false;
+                break;
+            case BinaryOpType::Ge:
+                if (bounds.lower)
+                    return false;
+                bounds.lower = cmp->literal;
+                bounds.lower_inclusive = true;
+                break;
+            case BinaryOpType::Lt:
+                if (bounds.upper)
+                    return false;
+                bounds.upper = cmp->literal;
+                bounds.upper_inclusive = false;
+                break;
+            case BinaryOpType::Le:
+                if (bounds.upper)
+                    return false;
+                bounds.upper = cmp->literal;
+                bounds.upper_inclusive = true;
+                break;
+            default:
+                return false;
+        }
+        any = true;
+        return true;
+    };
+    if (!absorb(absorb, where) || !any)
+    {
+        return std::nullopt;
+    }
+    return bounds;
+}
+
+std::optional<std::pair<int32_t, neon::type::Value>> Compiler::detect_index_equality(const neon::parser::ExprPtr & where, int32_t cursor_id)
+{
+    auto cmp = column_cmp(where);
+    if (!cmp || cmp->op != neon::parser::BinaryOpType::Eq)
+    {
+        return std::nullopt;
+    }
+    auto schema_it = cursor_schemas_.find(cursor_id);
+    if (schema_it == cursor_schemas_.end() || !schema_it->second)
+    {
+        return std::nullopt;
+    }
+    int32_t col = find_column_index(cursor_id, cmp->column);
+    if (col < 0 || col == schema_it->second->primary_key_col_idx_)
+    {
+        return std::nullopt;
+    }
+    const auto & indexes = schema_it->second->indexes_;
+    for (size_t i = 0; i < indexes.size(); ++i)
+    {
+        if (indexes[i].index_cols_.size() == 1 && indexes[i].index_cols_[0] == col)
+        {
+            return std::make_pair(static_cast<int32_t>(i), cmp->literal);
+        }
+    }
+    return std::nullopt;
+}
+
 void Compiler::emit_all_columns(int32_t cursor_id)
 {
     auto it = cursor_schemas_.find(cursor_id);
@@ -607,6 +778,8 @@ void Compiler::analyze_select_pipeline(const neon::planner::PlanNodePtr & node, 
     {
         case neon::planner::PlanNodeType::Filter: {
             const auto * f = static_cast<const neon::planner::FilterNode *>(node.get());
+            analyze_select_pipeline(f->child, pipe);
+            // A filter under the aggregate is WHERE. A filter above it is HAVING.
             if (pipe.agg)
             {
                 pipe.having = f;
@@ -615,12 +788,12 @@ void Compiler::analyze_select_pipeline(const neon::planner::PlanNodePtr & node, 
             {
                 pipe.where_filters.push_back(f);
             }
-            analyze_select_pipeline(f->child, pipe);
             break;
         }
         case neon::planner::PlanNodeType::Agg: {
-            pipe.agg = static_cast<const neon::planner::AggNode *>(node.get());
-            analyze_select_pipeline(pipe.agg->child, pipe);
+            const auto * agg = static_cast<const neon::planner::AggNode *>(node.get());
+            analyze_select_pipeline(agg->child, pipe);
+            pipe.agg = agg;
             break;
         }
         case neon::planner::PlanNodeType::Sort: {
@@ -816,6 +989,41 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
             program_.emit(OpCode::Halt);
             return;
         }
+
+        auto indexed = detect_index_equality(pipe.where_filters[0]->condition, cursor);
+        if (indexed.has_value())
+        {
+            program_.emit(OpCode::Const, program_.add_constant(indexed->second));
+            int32_t seek_inst = program_.emit(OpCode::SeekIndex, cursor, 0, indexed->first);
+            int32_t loop_start = program_.current_pos();
+            if (pipe.project)
+            {
+                for (const auto & expr : pipe.project->expressions)
+                {
+                    compile_expr(expr);
+                }
+                program_.emit(OpCode::ResultRow, num_output_cols);
+            }
+            else
+            {
+                emit_all_columns(cursor);
+                auto it = cursor_schemas_.find(cursor);
+                int32_t num_cols = (it != cursor_schemas_.end() && it->second) ? static_cast<int32_t>(it->second->columns_.size()) : 0;
+                program_.emit(OpCode::ResultRow, num_cols);
+            }
+            program_.emit(OpCode::Next, cursor, loop_start);
+            int32_t end_pos = program_.current_pos();
+            program_.patch_jump_operand2(seek_inst, end_pos);
+            program_.emit(OpCode::Close, cursor);
+            program_.emit(OpCode::Halt);
+            return;
+        }
+    }
+
+    std::optional<KeyBounds> bounds;
+    if (pipe.where_filters.size() == 1 && !pipe.having)
+    {
+        bounds = detect_pk_bounds(pipe.where_filters[0]->condition, cursor);
     }
 
     if (pipe.limit)
@@ -823,14 +1031,46 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
         program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int64, pipe.limit->limit_count)));
     }
 
-    int32_t rewind_inst = program_.emit(OpCode::Rewind, cursor, 0);
+    int32_t rewind_inst = 0;
+    if (bounds && bounds->lower)
+    {
+        program_.emit(OpCode::Const, program_.add_constant(*bounds->lower));
+        rewind_inst = program_.emit(OpCode::SeekGe, cursor, 0);
+    }
+    else
+    {
+        rewind_inst = program_.emit(OpCode::Rewind, cursor, 0);
+    }
     int32_t loop_start = program_.current_pos();
 
     std::vector<int32_t> filter_jumps;
-    for (const auto * f : pipe.where_filters)
+    int32_t stop_jump = -1;
+    if (bounds)
     {
-        compile_expr(f->condition);
-        filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
+        auto schema_it = cursor_schemas_.find(cursor);
+        int32_t pk_idx = (schema_it != cursor_schemas_.end() && schema_it->second) ? schema_it->second->primary_key_col_idx_ : 0;
+        if (bounds->upper)
+        {
+            program_.emit(OpCode::Column, cursor, pk_idx);
+            program_.emit(OpCode::Const, program_.add_constant(*bounds->upper));
+            program_.emit(bounds->upper_inclusive ? OpCode::Gt : OpCode::Ge);
+            stop_jump = program_.emit(OpCode::JumpIfTrue, 0);
+        }
+        if (bounds->lower && !bounds->lower_inclusive)
+        {
+            program_.emit(OpCode::Column, cursor, pk_idx);
+            program_.emit(OpCode::Const, program_.add_constant(*bounds->lower));
+            program_.emit(OpCode::Gt);
+            filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
+        }
+    }
+    else
+    {
+        for (const auto * f : pipe.where_filters)
+        {
+            compile_expr(f->condition);
+            filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
+        }
     }
 
     if (pipe.having)
@@ -873,6 +1113,10 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
 
     int32_t end_pos = program_.current_pos();
     program_.patch_jump_operand2(rewind_inst, end_pos);
+    if (stop_jump >= 0)
+    {
+        program_.patch_jump(stop_jump, end_pos);
+    }
     if (limit_jump >= 0)
     {
         program_.patch_jump(limit_jump, end_pos);
@@ -1198,6 +1442,93 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
         }
     }
 
+    // Equijoin on a primary key: scan the other side and probe with SeekByPk.
+    if (pipe.join->join_type == neon::parser::JoinType::Inner && pipe.join->condition
+        && pipe.join->condition->type == neon::parser::ExprType::BinaryOp)
+    {
+        const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*pipe.join->condition);
+        if (bin.op == neon::parser::BinaryOpType::Eq && bin.left && bin.right && bin.left->type == neon::parser::ExprType::ColumnRef
+            && bin.right->type == neon::parser::ExprType::ColumnRef)
+        {
+            const auto & key_left = static_cast<const neon::parser::ColumnRefExpr &>(*bin.left);
+            const auto & key_right = static_cast<const neon::parser::ColumnRefExpr &>(*bin.right);
+            auto [c0, i0] = resolve_column(key_left.table_name, key_left.column_name);
+            auto [c1, i1] = resolve_column(key_right.table_name, key_right.column_name);
+            auto pk_index = [this](int32_t cursor) -> int32_t {
+                auto it = cursor_schemas_.find(cursor);
+                if (it == cursor_schemas_.end() || !it->second)
+                {
+                    return -1;
+                }
+                return it->second->primary_key_col_idx_;
+            };
+            int32_t outer_cursor = -1;
+            int32_t inner_cursor = -1;
+            int32_t outer_col = -1;
+            if (i0 >= 0 && i0 == pk_index(c0) && c0 != c1)
+            {
+                inner_cursor = c0;
+                outer_cursor = c1;
+                outer_col = i1;
+            }
+            else if (i1 >= 0 && i1 == pk_index(c1) && c0 != c1)
+            {
+                inner_cursor = c1;
+                outer_cursor = c0;
+                outer_col = i0;
+            }
+            if (outer_cursor >= 0)
+            {
+                int32_t rewind_inst = program_.emit(OpCode::Rewind, outer_cursor, 0);
+                int32_t loop_start = program_.current_pos();
+                program_.emit(OpCode::Column, outer_cursor, outer_col);
+                int32_t seek_inst = program_.emit(OpCode::SeekByPk, inner_cursor, 0);
+                std::vector<int32_t> filter_jumps;
+                for (const auto * f : pipe.where_filters)
+                {
+                    compile_expr(f->condition);
+                    filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
+                }
+                if (pipe.project)
+                {
+                    for (const auto & expr : pipe.project->expressions)
+                    {
+                        compile_expr(expr);
+                    }
+                    program_.emit(OpCode::ResultRow, num_output_cols);
+                }
+                else
+                {
+                    emit_all_columns(left_cursor);
+                    emit_all_columns(right_cursor);
+                    int32_t num_cols = 0;
+                    if (left_schema)
+                    {
+                        num_cols += static_cast<int32_t>(left_schema->columns_.size());
+                    }
+                    if (right_schema)
+                    {
+                        num_cols += static_cast<int32_t>(right_schema->columns_.size());
+                    }
+                    program_.emit(OpCode::ResultRow, num_cols);
+                }
+                int32_t next_pos = program_.current_pos();
+                program_.patch_jump_operand2(seek_inst, next_pos);
+                for (auto jmp : filter_jumps)
+                {
+                    program_.patch_jump(jmp, next_pos);
+                }
+                program_.emit(OpCode::Next, outer_cursor, loop_start);
+                int32_t end_pos = program_.current_pos();
+                program_.patch_jump_operand2(rewind_inst, end_pos);
+                program_.emit(OpCode::Close, right_cursor);
+                program_.emit(OpCode::Close, left_cursor);
+                program_.emit(OpCode::Halt);
+                return;
+            }
+        }
+    }
+
     int32_t left_rewind = program_.emit(OpCode::Rewind, left_cursor, 0);
     int32_t left_loop = program_.current_pos();
 
@@ -1251,11 +1582,11 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
 
     int32_t right_end = program_.current_pos();
     program_.patch_jump_operand2(right_rewind, right_end);
-    program_.emit(OpCode::Close, right_cursor);
     program_.emit(OpCode::Next, left_cursor, left_loop);
 
     int32_t left_end = program_.current_pos();
     program_.patch_jump_operand2(left_rewind, left_end);
+    program_.emit(OpCode::Close, right_cursor);
     program_.emit(OpCode::Close, left_cursor);
     program_.emit(OpCode::Halt);
 }

@@ -148,6 +148,7 @@ TokenType Lexer::keyword_lookup(const std::string & word)
         {"values", TokenType::Values},
         {"create", TokenType::Create},
         {"table", TokenType::Table},
+        {"index", TokenType::Index},
         {"drop", TokenType::Drop},
         {"update", TokenType::Update},
         {"set", TokenType::Set},

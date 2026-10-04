@@ -63,6 +63,9 @@ enum class OpCode : uint8_t
     Dup,
     SeekByPk,
     TableCount,
+    SeekGe,
+    SeekIndex,
+    CreateIndex,
 };
 
 struct Instruction
@@ -195,6 +198,12 @@ inline std::string opcode_name(OpCode op)
             return "SeekByPk";
         case OpCode::TableCount:
             return "TableCount";
+        case OpCode::SeekGe:
+            return "SeekGe";
+        case OpCode::SeekIndex:
+            return "SeekIndex";
+        case OpCode::CreateIndex:
+            return "CreateIndex";
         default:
             return "Unknown";
     }

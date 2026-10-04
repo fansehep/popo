@@ -10,9 +10,16 @@ target_include_directories(
   base
   ${CMAKE_SOURCE_DIR}
 )
+# jemalloc replaces malloc. --as-needed would drop the DSO because no
+# translation unit names a jemalloc symbol.
+find_library(NEON_JEMALLOC NAMES jemalloc REQUIRED)
 target_link_libraries(
         base_lib
+        PUBLIC
         cpptrace::cpptrace
+        -Wl,--push-state,--no-as-needed
+        ${NEON_JEMALLOC}
+        -Wl,--pop-state
 )
 
 

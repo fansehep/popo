@@ -132,7 +132,18 @@ StmtPtr Parser::parse_statement()
     if (match(TokenType::Insert))
         return parse_insert();
     if (match(TokenType::Create))
+    {
+        if (check(TokenType::Unique))
+        {
+            advance_token();
+            return parse_create_index(true);
+        }
+        if (check(TokenType::Index))
+        {
+            return parse_create_index(false);
+        }
         return parse_create_table();
+    }
     if (match(TokenType::Update))
         return parse_update();
     if (match(TokenType::Delete))
@@ -236,6 +247,29 @@ StmtPtr Parser::parse_create_table()
     } while (match(TokenType::Comma));
     expect(TokenType::RParen);
 
+    return stmt;
+}
+
+StmtPtr Parser::parse_create_index(bool unique)
+{
+    expect(TokenType::Index);
+    Token name = expect(TokenType::Identifier);
+    expect(TokenType::On);
+    Token table = expect(TokenType::Identifier);
+    expect(TokenType::LParen);
+    auto stmt = std::make_shared<CreateIndexStatement>();
+    stmt->unique = unique;
+    stmt->index_name = name.value;
+    stmt->table_name = table.value;
+    do
+    {
+        stmt->columns.push_back(expect(TokenType::Identifier).value);
+    } while (match(TokenType::Comma));
+    expect(TokenType::RParen);
+    if (stmt->columns.size() != 1)
+    {
+        throw ParseError("only a single-column secondary index is supported");
+    }
     return stmt;
 }
 

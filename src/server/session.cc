@@ -2,6 +2,7 @@
 #include <chrono>
 #include <format>
 #include <spdlog/spdlog.h>
+#include "bytecode/fast_path.h"
 #include "server/protocol.h"
 
 namespace neon::server
@@ -98,6 +99,19 @@ void Session::handle_query(const std::string & sql)
 {
     using clock = std::chrono::high_resolution_clock;
     auto t0 = clock::now();
+
+    if (auto fast = neon::bytecode::try_point_select(schema_mgr_, engine_, sql))
+    {
+        if (!fast->columns.empty())
+        {
+            send_result_set(*fast);
+        }
+        else
+        {
+            send_ok(0);
+        }
+        return;
+    }
 
     neon::parser::Parser parser;
     auto parse_result = parser.parse(sql);

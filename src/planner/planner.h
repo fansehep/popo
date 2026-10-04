@@ -22,6 +22,7 @@ private:
     PlanNodePtr plan_select(const neon::parser::SelectStatement & stmt);
     PlanNodePtr plan_insert(const neon::parser::InsertStatement & stmt);
     PlanNodePtr plan_create_table(const neon::parser::CreateTableStatement & stmt);
+    PlanNodePtr plan_create_index(const neon::parser::CreateIndexStatement & stmt);
     PlanNodePtr plan_update(const neon::parser::UpdateStatement & stmt);
     PlanNodePtr plan_delete(const neon::parser::DeleteStatement & stmt);
     PlanNodePtr plan_drop_table(const neon::parser::DropTableStatement & stmt);

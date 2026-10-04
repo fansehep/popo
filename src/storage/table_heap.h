@@ -1,10 +1,12 @@
 #pragma once
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 #include "src/catalog/schema.h"
+#include "src/storage/adaptive_hash.h"
 #include "src/storage/btree_page.h"
 #include "src/storage/buffer_pool.h"
 #include "src/storage/common.h"
@@ -33,11 +35,17 @@ public:
     // Advance to next valid tuple
     bool next();
 
+    // Position at the first live tuple whose primary key is >= key.
+    void seek_ge(const neon::type::Value & key);
+
     // Is iterator pointing to a valid tuple?
     bool valid() const;
 
     // Physical tuple at the current slot. Deform with schema() when a Value is needed.
     Tuple current_tuple() const;
+
+    // Bytes of the current slot. Valid while this iterator keeps the leaf pinned.
+    std::pair<const char *, uint32_t> current_bytes() const;
 
     // Deformed view of current_tuple(), for the executor.
     neon::type::Row current_row() const;
@@ -66,6 +74,7 @@ class TableHeap
 public:
     TableHeap(
         const std::string & table_name, BufferPoolManager * buffer_pool, RedoLogManager * redo_log, const neon::catalog::Schema & schema);
+    ~TableHeap();
 
     // Insert a physical tuple into the B+Tree, returns RowId. Writes redo log.
     RowId insert_row(neon::txn::Transaction * txn, const Tuple & tuple);
@@ -79,6 +88,9 @@ public:
     // Get the physical tuple at RowId.
     std::optional<Tuple> get_row(RowId rid) const;
 
+    // Decode one column at RowId without copying the rest of the tuple.
+    std::optional<neon::type::Value> read_column(RowId rid, int32_t column) const;
+
     // Count live tuples by walking leaf pages once.
     int64_t count_rows() const;
 
@@ -88,6 +100,20 @@ public:
 
     // Create an iterator for full table scan (leaf page linked list, PK order)
     TableIterator iter() const;
+
+    // Secondary indexes share this table's file, so one commit still syncs once.
+    // Leaf order is (index column, primary key), which keeps duplicate keys together.
+    void attach_index(std::string name, int32_t column, bool unique, std::unique_ptr<TableHeap> tree);
+    std::vector<neon::type::Value> lookup_index(size_t ordinal, const neon::type::Value & key) const;
+    std::vector<page_id_t> index_roots() const;
+    void set_index_roots(const std::vector<page_id_t> & roots);
+    void clear_ahi();
+
+    // Index heaps compare this many leading columns. Base tables stay at 1.
+    void set_sort_width(int width) { sort_width_ = width; }
+    bool insert_entry(const neon::type::Value & key, const neon::type::Value & pk);
+    bool erase_entry(const neon::type::Value & key, const neon::type::Value & pk);
+    std::vector<neon::type::Value> lookup_prefix(const neon::type::Value & key) const;
 
     // Get table name
     const std::string & table_name() const { return table_name_; }
@@ -110,6 +136,17 @@ private:
     mutable std::mutex mutex_;
 
     page_id_t root_page_id_ = INVALID_PAGE_ID; // B+Tree root page
+    int sort_width_ = 1;
+    mutable AdaptiveHashIndex ahi_;
+
+    struct SecondaryIndex
+    {
+        std::string name;
+        int32_t column = 0;
+        bool unique = false;
+        std::unique_ptr<TableHeap> tree;
+    };
+    std::vector<SecondaryIndex> indexes_;
 
     // --- PK helpers ---
     neon::type::Value extract_pk(const Tuple & tuple) const;
@@ -124,6 +161,13 @@ private:
     // also returns the path of internal page_ids from root to leaf's parent.
     // path[0] = root, path[last] = leaf's parent (internal node), or empty if root is leaf.
     page_id_t search_leaf_with_path(const neon::type::Value & pk, std::vector<page_id_t> & path) const;
+    page_id_t search_leaf_bytes(const char * data, uint16_t len, std::vector<page_id_t> & path) const;
+    int compare_prefix(const char * a, uint16_t a_len, const char * b, uint16_t b_len, int width) const;
+    bool sync_indexes_insert(const Tuple & tuple, const neon::type::Value & pk);
+    void sync_indexes_delete(const char * data, uint16_t len);
+    void sync_indexes_update(const char * old_data, uint16_t old_len, const Tuple & neu);
+    void ahi_build(page_id_t leaf) const;
+    void ahi_note(page_id_t leaf, slot_id_t slot, const neon::type::Value & pk) const;
 
     // --- B+Tree insert ---
     // Insert serialized row into the leaf page. Handles split and upward propagation.

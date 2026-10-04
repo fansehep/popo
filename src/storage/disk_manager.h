@@ -16,8 +16,10 @@ namespace neon::storage
 class IoRing;
 
 // One data file per table. Logical pages stay PAGE_SIZE bytes. Physically they
-// are zstd-compressed and appended into 1MB blocks. Commit publishes one
-// generation; abort throws that generation away.
+// are zstd-compressed and appended into 1MB blocks. Commit appends one record
+// to commit.wal and fsyncs that file once, so a transaction that dirties
+// several tables still has a single durability barrier. Abort throws that
+// generation away.
 class DiskManager
 {
 public:
@@ -64,12 +66,17 @@ private:
         uint32_t open_block = NO_BLOCK;
         std::vector<uint32_t> free_blocks;
         std::vector<BlockMeta> blocks;
+        std::vector<uint8_t> block_dirty;
     };
 
     struct PendingWrite
     {
         uint64_t offset = 0;
-        std::vector<char> bytes;
+        page_id_t page_id = 0;
+        uint64_t gen = 0;
+        // Shared with the page cache so a transaction that rewrites a page
+        // keeps every version for the commit record without a second buffer.
+        std::shared_ptr<std::vector<char>> bytes;
     };
 
     struct TableState
@@ -83,7 +90,8 @@ private:
         std::unordered_map<page_id_t, PageLoc> committed;
         std::unordered_map<page_id_t, PageLoc> overlay;
         std::deque<PendingWrite> pending_io;
-        std::unordered_map<page_id_t, std::vector<char>> pending_pages;
+        std::unordered_map<page_id_t, std::shared_ptr<std::vector<char>>> pending_pages;
+        std::unordered_map<page_id_t, std::shared_ptr<std::vector<char>>> cached_pages;
         bool participating = false;
         bool grew = false;
         uint64_t txn_gen = 0;
@@ -98,6 +106,11 @@ private:
     void * dctx_ = nullptr;
     std::vector<char> comp_buf_;
     std::unordered_map<std::string, TableState> tables_;
+    int wal_fd_ = -1;
+    uint64_t wal_end_ = FILE_HEADER_SIZE;
+    uint64_t wal_alloc_ = FILE_HEADER_SIZE;
+    std::vector<char> wal_payload_;
+    std::vector<char> wal_record_;
     bool in_txn_ = false;
     bool in_gc_ = false;
 
@@ -114,9 +127,13 @@ private:
     const PageLoc * lookup(const TableState & table, page_id_t page_id) const;
     neon::base::Result<uint32_t> alloc_block(TableState & table);
     neon::base::Result<void> append_entry(TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone);
-    neon::base::Result<void> publish_table(TableState & table);
-    neon::base::Result<void> flush_durable(TableState & table);
-    neon::base::Result<std::vector<char>> compress_page(const char * src);
+    neon::base::Result<void> append_wal_commit();
+    neon::base::Result<void> durable_wal_write(const char * data, uint32_t len);
+    void publish_memory(TableState & table);
+    void open_wal();
+    void replay_wal();
+    void reset_wal();
+    neon::base::Result<uint32_t> compress_page(const char * src);
     neon::base::Result<void> decompress_page(const char * src, size_t src_len, char * dest);
     void abort_table(TableState & table);
     void commit_unlocked();

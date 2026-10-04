@@ -56,6 +56,9 @@ private:
         neon::type::Row current_row_cache;
         bool has_current = false;
         bool row_materialized = false;
+        bool index_scan = false;
+        size_t index_pos = 0;
+        std::vector<neon::storage::RowId> index_hits;
     };
     std::unordered_map<int32_t, Cursor> cursors_;
 

@@ -18,6 +18,9 @@ public:
 
     // Calculate serialized size without actually serializing
     static uint32_t serialized_size(const neon::type::Row & row, const neon::catalog::Schema & schema);
+
+    // Decode one column. Other columns are skipped and not allocated.
+    static neon::type::Value read_column(const char * data, uint32_t len, const neon::catalog::Schema & schema, int32_t column);
 };
 
 } // namespace neon::storage

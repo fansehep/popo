@@ -3,6 +3,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "src/catalog/schema.h"
 #include "src/storage/buffer_pool.h"
 #include "src/storage/common.h"
@@ -29,6 +30,7 @@ public:
     // Table management
     TableHeap * get_table_heap(const std::string & table_name);
     void create_table(const std::string & table_name, const neon::catalog::Schema & schema);
+    void create_index(const std::string & table_name, const std::string & index_name, int32_t column, bool unique);
     void drop_table(const std::string & table_name);
     bool table_exists(const std::string & table_name) const;
 
@@ -49,7 +51,12 @@ public:
 private:
     std::string data_dir_;
     size_t buffer_pool_size_;
-    std::unordered_map<std::string, page_id_t> root_snap_;
+    struct RootSnap
+    {
+        page_id_t root = INVALID_PAGE_ID;
+        std::vector<page_id_t> index_roots;
+    };
+    std::unordered_map<std::string, RootSnap> root_snap_;
 
     std::unique_ptr<DiskManager> disk_manager_;
     std::unique_ptr<BufferPoolManager> buffer_pool_;

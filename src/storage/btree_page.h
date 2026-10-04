@@ -216,39 +216,38 @@ public:
         return true;
     }
 
-    // Split this page: move half the entries to new_page.
-    // Returns {promoted_key, new_page_id}
+    // Split this page: keys [0, mid) stay here, key[mid] is promoted,
+    // keys (mid, kc) move to new_page. Each entry.child is the subtree of keys
+    // strictly less than that entry. The right page keeps the old rightmost child.
+    // Returns {promoted_key, new_page_id}.
     std::pair<std::vector<char>, page_id_t> split(BTreeInternalPage * new_page)
     {
         uint16_t kc = key_count();
         uint16_t mid = kc / 2;
 
-        // Set the same level on the new page
-        new_page->init(INVALID_PAGE_ID, level());
-
-        // Copy entries [mid+1 .. kc-1] to new_page
-        for (uint16_t i = mid + 1; i < kc; i++)
+        struct Saved
         {
-            const auto * src_entry = entry_at(i);
-            new_page->insert(
-                data_ + src_entry->key_offset,
-                src_entry->key_len,
-                src_entry->child,
-                [](const char *, uint16_t, const char *, uint16_t) { return 0; });
+            std::vector<char> key;
+            page_id_t child = INVALID_PAGE_ID;
+        };
+        std::vector<Saved> saved;
+        saved.reserve(kc);
+        for (uint16_t i = 0; i < kc; ++i)
+        {
+            const auto * entry = entry_at(i);
+            saved.push_back(Saved{
+                std::vector<char>(data_ + entry->key_offset, data_ + entry->key_offset + entry->key_len),
+                entry->child,
+            });
         }
-        // Set rightmost child of new page
-        new_page->set_rightmost_child(rightmost_child());
+        page_id_t old_right = rightmost_child();
+        uint16_t lvl = level();
+        page_id_t self_id = header()->page_id;
+        std::vector<char> promoted = saved[mid].key;
 
-        // The middle key is promoted upward
-        const auto * mid_entry = entry_at(mid);
-        std::vector<char> promoted_key(data_ + mid_entry->key_offset, data_ + mid_entry->key_offset + mid_entry->key_len);
-        page_id_t new_page_id = INVALID_PAGE_ID; // will be set by caller
-
-        // Keep entries [0..mid-1] in this page, mid_entry.child becomes rightmost child
-        set_rightmost_child(mid_entry->child);
-        set_key_count(mid);
-
-        return {promoted_key, new_page_id};
+        load_range(self_id, lvl, saved, 0, mid, saved[mid].child);
+        new_page->load_range(INVALID_PAGE_ID, lvl, saved, static_cast<size_t>(mid) + 1, kc, old_right);
+        return {std::move(promoted), INVALID_PAGE_ID};
     }
 
     // Point a child pointer from old_pid to new_pid. Returns false if old_pid is absent.
@@ -273,6 +272,28 @@ public:
 
     // Write page_id into header (used after allocating a page for split)
     void set_page_id(page_id_t pid) { header()->page_id = pid; }
+
+    // Replace this page with keys [begin, end) and an explicit rightmost child.
+    // Saved::child is the left child of that key.
+    template <typename SavedRange>
+    void load_range(page_id_t pid, uint16_t lvl, const SavedRange & saved, size_t begin, size_t end, page_id_t rightmost)
+    {
+        init(pid, lvl);
+        uint16_t n = static_cast<uint16_t>(end - begin);
+        for (uint16_t i = 0; i < n; ++i)
+        {
+            const auto & item = saved[begin + i];
+            auto key_len = static_cast<uint16_t>(item.key.size());
+            header()->tuple_area_offset -= key_len;
+            std::memcpy(data_ + header()->tuple_area_offset, item.key.data(), key_len);
+            InternalEntry * entry = entry_at(i);
+            entry->child = item.child;
+            entry->key_offset = header()->tuple_area_offset;
+            entry->key_len = key_len;
+        }
+        set_key_count(n);
+        set_rightmost_child(rightmost);
+    }
 
     char * raw_data() { return data_; }
     const char * raw_data() const { return data_; }

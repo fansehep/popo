@@ -3,6 +3,7 @@
 #include <chrono>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "src/bytecode/compiler.h"
 #include "src/bytecode/vm.h"
@@ -25,6 +26,36 @@ struct SqlResult
     int64_t vm_us = 0;
 };
 
+class SqlRunner;
+
+// Several SQL statements, one commit. Destructor aborts if commit was not called.
+class SqlTxn
+{
+public:
+    SqlTxn() = default;
+    SqlTxn(SqlTxn && other) noexcept
+        : runner_(other.runner_)
+        , txn_(other.txn_)
+    {
+        other.runner_ = nullptr;
+        other.txn_ = nullptr;
+    }
+    SqlTxn & operator=(SqlTxn &&) = delete;
+    SqlTxn(const SqlTxn &) = delete;
+    SqlTxn & operator=(const SqlTxn &) = delete;
+    ~SqlTxn();
+
+    SqlResult exec(const std::string & sql);
+    void commit();
+
+private:
+    friend class SqlRunner;
+    explicit SqlTxn(SqlRunner * runner);
+
+    SqlRunner * runner_ = nullptr;
+    neon::txn::Transaction * txn_ = nullptr;
+};
+
 // Same pipeline as Session::handle_query: one SQL string, one statement at a time.
 class SqlRunner
 {
@@ -38,7 +69,14 @@ public:
         engine_.init();
     }
 
-    SqlResult exec(const std::string & sql)
+    SqlResult exec(const std::string & sql) { return run(sql, nullptr); }
+
+    SqlTxn begin() { return SqlTxn(this); }
+
+private:
+    friend class SqlTxn;
+
+    SqlResult run(const std::string & sql, neon::txn::Transaction * outer)
     {
         using clock = std::chrono::steady_clock;
         SqlResult out;
@@ -76,7 +114,7 @@ public:
                     return out;
                 }
 
-                auto executed = vm_.execute(*compiled);
+                auto executed = vm_.execute(*compiled, outer);
                 auto tv1 = clock::now();
                 out.vm_us += us(tv1 - tc1);
                 if (!executed)
@@ -96,7 +134,6 @@ public:
         }
     }
 
-private:
     template <typename Dur>
     static int64_t us(Dur d)
     {
@@ -109,5 +146,47 @@ private:
     neon::bytecode::Compiler compiler_;
     neon::bytecode::VirtualMachine vm_;
 };
+
+inline SqlTxn::SqlTxn(SqlRunner * runner)
+    : runner_(runner)
+    , txn_(runner->engine_.begin_txn())
+{
+}
+
+inline SqlTxn::~SqlTxn()
+{
+    if (txn_ != nullptr && runner_ != nullptr)
+    {
+        runner_->engine_.abort_txn(txn_);
+        txn_ = nullptr;
+    }
+}
+
+inline SqlResult SqlTxn::exec(const std::string & sql)
+{
+    if (txn_ == nullptr || runner_ == nullptr)
+    {
+        SqlResult out;
+        out.error = "transaction is closed";
+        return out;
+    }
+    SqlResult out = runner_->run(sql, txn_);
+    if (!out.ok)
+    {
+        runner_->engine_.abort_txn(txn_);
+        txn_ = nullptr;
+    }
+    return out;
+}
+
+inline void SqlTxn::commit()
+{
+    if (txn_ == nullptr || runner_ == nullptr)
+    {
+        throw std::runtime_error("transaction is closed");
+    }
+    runner_->engine_.commit_txn(txn_);
+    txn_ = nullptr;
+}
 
 } // namespace neon::test

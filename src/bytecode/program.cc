@@ -55,6 +55,7 @@ std::string Program::disassemble() const
                 oss << " ->" << inst.operand1;
                 break;
             case OpCode::Close:
+            case OpCode::TableCount:
             case OpCode::ResultRow:
             case OpCode::MakeRow:
             case OpCode::InsertRow:

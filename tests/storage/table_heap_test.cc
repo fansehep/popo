@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <filesystem>
+#include <numeric>
 #include <random>
 #include <set>
 #include <gtest/gtest.h>
@@ -536,4 +537,29 @@ TEST_F(TableHeapTest, MixedOperations)
         it.next();
     }
     EXPECT_GE(final_count, NUM_ROWS - 50); // At most 50 deletes without reinsert
+}
+
+TEST_F(TableHeapTest, WideRowsStayReachableByPk)
+{
+    neon::txn::Transaction txn(1);
+    constexpr int kRows = 800;
+    std::string payload(900, 'x');
+    std::vector<int> ids(kRows);
+    std::iota(ids.begin(), ids.end(), 1);
+    std::mt19937 rng(1);
+    std::shuffle(ids.begin(), ids.end(), rng);
+    for (int id : ids)
+    {
+        auto rid = heap->insert_row(&txn, make_row(schema, id, payload + std::to_string(id), id));
+        ASSERT_TRUE(rid.is_valid()) << id;
+    }
+    for (int id = 1; id <= kRows; ++id)
+    {
+        auto found = heap->lookup_pk(Value(ValueType::Int32, id));
+        ASSERT_TRUE(found.has_value()) << id;
+        auto tuple = heap->get_row(*found);
+        ASSERT_TRUE(tuple.has_value());
+        auto row = tuple->deform(schema);
+        EXPECT_EQ(row.values_[0].i32(), id);
+    }
 }

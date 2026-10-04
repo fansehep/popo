@@ -62,6 +62,7 @@ enum class OpCode : uint8_t
     Noop,
     Dup,
     SeekByPk,
+    TableCount,
 };
 
 struct Instruction
@@ -192,6 +193,8 @@ inline std::string opcode_name(OpCode op)
             return "Dup";
         case OpCode::SeekByPk:
             return "SeekByPk";
+        case OpCode::TableCount:
+            return "TableCount";
         default:
             return "Unknown";
     }

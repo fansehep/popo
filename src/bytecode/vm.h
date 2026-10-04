@@ -29,12 +29,15 @@ class VirtualMachine
 public:
     VirtualMachine(neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine);
 
-    neon::base::Result<ExecuteSuccess> execute(const Program & program);
+    // outer_txn == nullptr: this call begins and commits one transaction.
+    // Otherwise the caller owns the transaction and commits or aborts it.
+    neon::base::Result<ExecuteSuccess> execute(const Program & program, neon::txn::Transaction * outer_txn = nullptr);
 
 private:
     neon::catalog::SchemaManager & schema_mgr_;
     neon::storage::StorageEngine & engine_;
     neon::txn::Transaction * txn_ = nullptr;
+    bool own_txn_ = true;
 
     // Execution state
     std::vector<neon::type::Value> stack_;
@@ -52,6 +55,7 @@ private:
         neon::storage::RowId current_rid;
         neon::type::Row current_row_cache;
         bool has_current = false;
+        bool row_materialized = false;
     };
     std::unordered_map<int32_t, Cursor> cursors_;
 
@@ -90,7 +94,10 @@ private:
     {
         if (txn_)
         {
-            engine_.abort_txn(txn_);
+            if (own_txn_)
+            {
+                engine_.abort_txn(txn_);
+            }
             txn_ = nullptr;
         }
         return std::unexpected(err);

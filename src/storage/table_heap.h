@@ -51,6 +51,7 @@ private:
     page_id_t current_page_id_ = INVALID_PAGE_ID;
     slot_id_t current_slot_id_ = 0;
     bool valid_ = false;
+    PageGuard page_guard_;
 
     // Skip to next valid slot (within current page or move to next leaf page)
     void advance_to_valid();
@@ -77,6 +78,9 @@ public:
 
     // Get the physical tuple at RowId.
     std::optional<Tuple> get_row(RowId rid) const;
+
+    // Count live tuples by walking leaf pages once.
+    int64_t count_rows() const;
 
     // Look up a row by primary key value using B+Tree search.
     // Returns RowId of the matching row, or nullopt if not found.
@@ -111,6 +115,9 @@ private:
     neon::type::Value extract_pk(const Tuple & tuple) const;
     neon::type::Value extract_pk_from_serialized(const char * data, uint16_t len) const;
     int compare_pk(const neon::type::Value & a, const neon::type::Value & b) const;
+    // Compare the primary-key column of two physical tuples. Fixed-width keys
+    // at column 0 are read from the bytes; Schema supplies the type.
+    int compare_tuple_pk(const char * a, uint16_t a_len, const char * b, uint16_t b_len) const;
 
     // --- B+Tree navigation ---
     // Search from root to find the leaf page that should contain the given key,
@@ -120,7 +127,8 @@ private:
 
     // --- B+Tree insert ---
     // Insert serialized row into the leaf page. Handles split and upward propagation.
-    slot_id_t btree_insert(const char * data, uint16_t len, const neon::type::Value & pk);
+    // Returns {slot_id, leaf page_id} of the inserted tuple.
+    std::pair<slot_id_t, page_id_t> btree_insert(const char * data, uint16_t len, const neon::type::Value & pk);
 
     // Insert key+child into internal node, handling splits recursively.
     // path: stack of internal page_ids from root down to the target node's parent.

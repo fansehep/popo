@@ -228,13 +228,13 @@ void VirtualMachine::reset()
     result_ = ExecuteSuccess();
 }
 
-neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & program)
+neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & program, neon::txn::Transaction * outer_txn)
 {
     reset();
+    own_txn_ = outer_txn == nullptr;
     result_.columns = program.result_columns;
 
-    // Begin transaction for this execution
-    txn_ = engine_.begin_txn();
+    txn_ = own_txn_ ? engine_.begin_txn() : outer_txn;
 
     while (pc_ < static_cast<int32_t>(program.instructions.size()))
     {
@@ -269,6 +269,23 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Column opcode: invalid cursor"));
                 }
                 auto & cursor = it->second;
+                if (!cursor.row_materialized)
+                {
+                    if (cursor.iter && cursor.iter->valid())
+                    {
+                        cursor.current_row_cache = cursor.iter->current_row();
+                    }
+                    else if (cursor.heap)
+                    {
+                        auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
+                        if (!tuple_opt.has_value())
+                        {
+                            return error(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Column opcode: row missing"));
+                        }
+                        cursor.current_row_cache = tuple_opt->deform(cursor.schema);
+                    }
+                    cursor.row_materialized = true;
+                }
                 auto & row = cursor.current_row_cache;
                 if (inst.operand2 < 0 || inst.operand2 >= static_cast<int32_t>(row.values_.size()))
                 {
@@ -462,7 +479,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 else
                 {
                     cursor.current_rid = cursor.iter->current_row_id();
-                    cursor.current_row_cache = cursor.iter->current_row();
+                    cursor.row_materialized = false;
                     cursor.has_current = true;
                     pc_++;
                 }
@@ -481,7 +498,7 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 if (cursor.iter->valid())
                 {
                     cursor.current_rid = cursor.iter->current_row_id();
-                    cursor.current_row_cache = cursor.iter->current_row();
+                    cursor.row_materialized = false;
                     cursor.has_current = true;
                     pc_ = inst.operand2;
                 }
@@ -636,7 +653,20 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     break;
                 }
                 cursor.current_row_cache = tuple_opt->deform(cursor.schema);
+                cursor.row_materialized = true;
                 cursor.has_current = true;
+                pc_++;
+                break;
+            }
+
+            case OpCode::TableCount: {
+                auto it = cursors_.find(inst.operand1);
+                int64_t n = 0;
+                if (it != cursors_.end() && it->second.heap)
+                {
+                    n = it->second.heap->count_rows();
+                }
+                push(neon::type::Value(neon::type::ValueType::Int64, n));
                 pc_++;
                 break;
             }
@@ -1112,12 +1142,11 @@ neon::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
     }
 
 done:
-    // Commit on success
-    if (txn_)
+    if (own_txn_ && txn_)
     {
         engine_.commit_txn(txn_);
-        txn_ = nullptr;
     }
+    txn_ = nullptr;
     if (!result_.rows.empty())
     {
         result_.message = std::to_string(result_.rows.size()) + " rows in set";

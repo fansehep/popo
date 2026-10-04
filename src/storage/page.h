@@ -198,20 +198,47 @@ public:
             return std::nullopt;
         }
 
-        // Find insertion position: first slot where data < existing tuple
+        // Find insertion position: first slot where data < existing tuple.
+        // Slots stay PK-sorted, so binary search is valid until a deleted slot appears.
         uint16_t pos = 0;
-        while (pos < hdr->slot_count)
+        uint16_t lo = 0;
+        uint16_t hi = hdr->slot_count;
+        bool linear = false;
+        while (lo < hi)
         {
-            const auto * slot = slot_at(pos);
+            uint16_t mid = static_cast<uint16_t>(lo + (hi - lo) / 2);
+            const auto * slot = slot_at(mid);
             if (slot->flags == SLOT_DELETED)
             {
-                pos++;
-                continue;
+                linear = true;
+                break;
             }
             int c = cmp(data, len, data_ + slot->offset, slot->length);
             if (c < 0)
-                break;
-            pos++;
+                hi = mid;
+            else
+                lo = static_cast<uint16_t>(mid + 1);
+        }
+        if (!linear)
+        {
+            pos = lo;
+        }
+        else
+        {
+            pos = 0;
+            while (pos < hdr->slot_count)
+            {
+                const auto * slot = slot_at(pos);
+                if (slot->flags == SLOT_DELETED)
+                {
+                    pos++;
+                    continue;
+                }
+                int c = cmp(data, len, data_ + slot->offset, slot->length);
+                if (c < 0)
+                    break;
+                pos++;
+            }
         }
 
         // Shift slots [pos..slot_count-1] down by one

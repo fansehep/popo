@@ -787,6 +787,37 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
         }
     }
 
+    if (pipe.where_filters.size() == 1 && !pipe.having)
+    {
+        auto pk_eq = detect_pk_equality(pipe.where_filters[0]->condition, cursor);
+        if (pk_eq.has_value())
+        {
+            auto pk_value = std::get<2>(pk_eq.value());
+            program_.emit(OpCode::Const, program_.add_constant(pk_value));
+            int32_t seek_inst = program_.emit(OpCode::SeekByPk, cursor, 0);
+            if (pipe.project)
+            {
+                for (const auto & expr : pipe.project->expressions)
+                {
+                    compile_expr(expr);
+                }
+                program_.emit(OpCode::ResultRow, num_output_cols);
+            }
+            else
+            {
+                emit_all_columns(cursor);
+                auto it = cursor_schemas_.find(cursor);
+                int32_t num_cols = (it != cursor_schemas_.end() && it->second) ? static_cast<int32_t>(it->second->columns_.size()) : 0;
+                program_.emit(OpCode::ResultRow, num_cols);
+            }
+            int32_t end_pos = program_.current_pos();
+            program_.patch_jump_operand2(seek_inst, end_pos);
+            program_.emit(OpCode::Close, cursor);
+            program_.emit(OpCode::Halt);
+            return;
+        }
+    }
+
     if (pipe.limit)
     {
         program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int64, pipe.limit->limit_count)));
@@ -1015,6 +1046,23 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
         {
             int32_t name_idx = program_.add_string_constant(expanded_names[i]);
             program_.emit(OpCode::ColumnName, static_cast<int32_t>(i), name_idx);
+        }
+    }
+
+    bool plain_count_star = pipe.where_filters.empty() && !pipe.having && pipe.agg->agg_exprs.size() == 1
+        && pipe.agg->agg_exprs[0] && pipe.agg->agg_exprs[0]->type == neon::parser::ExprType::FunctionCall;
+    if (plain_count_star)
+    {
+        const auto & func = static_cast<const neon::parser::FunctionCallExpr &>(*pipe.agg->agg_exprs[0]);
+        bool count_star = func.args.empty()
+            || (func.args.size() == 1 && func.args[0] && func.args[0]->type == neon::parser::ExprType::Star);
+        if (func.func == neon::parser::AggFuncType::Count && count_star)
+        {
+            program_.emit(OpCode::TableCount, cursor);
+            program_.emit(OpCode::ResultRow, 1);
+            program_.emit(OpCode::Close, cursor);
+            program_.emit(OpCode::Halt);
+            return;
         }
     }
 

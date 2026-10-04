@@ -223,6 +223,109 @@ int TableHeap::compare_pk(const neon::type::Value & a, const neon::type::Value &
     return compare_as(schema_.columns_[pk_idx].data_type_, a, b);
 }
 
+int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, uint16_t b_len) const
+{
+    int32_t pk_idx = schema_.primary_key_col_idx_;
+    if (pk_idx != 0 || schema_.columns_.empty() || a_len < sizeof(uint16_t) || b_len < sizeof(uint16_t))
+    {
+        return compare_pk(extract_pk_from_serialized(a, a_len), extract_pk_from_serialized(b, b_len));
+    }
+
+    auto read_i64 = [this](const char * data, uint16_t len, bool & is_null, int64_t & out) -> bool
+    {
+        uint16_t num_cols = 0;
+        std::memcpy(&num_cols, data, sizeof(uint16_t));
+        uint32_t bitmap_bytes = (static_cast<uint32_t>(num_cols) + 7) / 8;
+        if (len < sizeof(uint16_t) + bitmap_bytes)
+        {
+            return false;
+        }
+        is_null = (static_cast<unsigned char>(data[sizeof(uint16_t)]) & 1) != 0;
+        if (is_null)
+        {
+            return true;
+        }
+        const char * payload = data + sizeof(uint16_t) + bitmap_bytes;
+        uint32_t remain = len - (sizeof(uint16_t) + bitmap_bytes);
+        switch (schema_.columns_[0].data_type_)
+        {
+            case neon::type::ValueType::Int8:
+                if (remain < 1)
+                    return false;
+                out = static_cast<int8_t>(payload[0]);
+                return true;
+            case neon::type::ValueType::Uint8:
+            case neon::type::ValueType::Char:
+            case neon::type::ValueType::Bool:
+                if (remain < 1)
+                    return false;
+                out = static_cast<unsigned char>(payload[0]);
+                return true;
+            case neon::type::ValueType::Int16: {
+                if (remain < 2)
+                    return false;
+                int16_t v = 0;
+                std::memcpy(&v, payload, 2);
+                out = v;
+                return true;
+            }
+            case neon::type::ValueType::Uint16: {
+                if (remain < 2)
+                    return false;
+                uint16_t v = 0;
+                std::memcpy(&v, payload, 2);
+                out = v;
+                return true;
+            }
+            case neon::type::ValueType::Int32: {
+                if (remain < 4)
+                    return false;
+                int32_t v = 0;
+                std::memcpy(&v, payload, 4);
+                out = v;
+                return true;
+            }
+            case neon::type::ValueType::Uint32: {
+                if (remain < 4)
+                    return false;
+                uint32_t v = 0;
+                std::memcpy(&v, payload, 4);
+                out = v;
+                return true;
+            }
+            case neon::type::ValueType::Int64:
+            case neon::type::ValueType::Uint64: {
+                if (remain < 8)
+                    return false;
+                std::memcpy(&out, payload, 8);
+                return true;
+            }
+            default:
+                return false;
+        }
+    };
+
+    bool a_null = false;
+    bool b_null = false;
+    int64_t a_val = 0;
+    int64_t b_val = 0;
+    if (!read_i64(a, a_len, a_null, a_val) || !read_i64(b, b_len, b_null, b_val))
+    {
+        return compare_pk(extract_pk_from_serialized(a, a_len), extract_pk_from_serialized(b, b_len));
+    }
+    if (a_null && b_null)
+        return 0;
+    if (a_null)
+        return -1;
+    if (b_null)
+        return 1;
+    if (a_val < b_val)
+        return -1;
+    if (a_val > b_val)
+        return 1;
+    return 0;
+}
+
 // --- B+Tree Navigation ---
 
 page_id_t TableHeap::search_leaf_with_path(const neon::type::Value & pk, std::vector<page_id_t> & path) const
@@ -258,11 +361,7 @@ page_id_t TableHeap::search_leaf_with_path(const neon::type::Value & pk, std::ve
             const auto * internal = reinterpret_cast<const BTreeInternalPage *>(guard.data());
 
             auto cmp = [this](const char * a_data, uint16_t a_len, const char * b_data, uint16_t b_len) -> int
-            {
-                auto key_a = extract_pk_from_serialized(a_data, a_len);
-                auto key_b = extract_pk_from_serialized(b_data, b_len);
-                return compare_pk(key_a, key_b);
-            };
+            { return compare_tuple_pk(a_data, a_len, b_data, b_len); };
 
             neon::type::Row key_row;
             int32_t ncols = static_cast<int32_t>(schema_.columns_.size());
@@ -360,11 +459,7 @@ void TableHeap::insert_internal_with_path(
     auto * internal = reinterpret_cast<BTreeInternalPage *>(guard.data());
 
     auto cmp = [this](const char * a, uint16_t al, const char * b, uint16_t bl) -> int
-    {
-        auto ka = extract_pk_from_serialized(a, al);
-        auto kb = extract_pk_from_serialized(b, bl);
-        return compare_pk(ka, kb);
-    };
+    { return compare_tuple_pk(a, al, b, bl); };
 
     // Try simple insert first
     if (internal->insert(key_data, key_len, child_page, cmp))
@@ -428,7 +523,7 @@ void TableHeap::insert_internal_with_path(
     }
 }
 
-slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::type::Value & pk)
+std::pair<slot_id_t, page_id_t> TableHeap::btree_insert(const char * data, uint16_t len, const neon::type::Value & pk)
 {
     // If no root, create first leaf as root
     if (root_page_id_ == INVALID_PAGE_ID)
@@ -436,7 +531,7 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
         page_id_t new_pid = 0;
         auto guard = buffer_pool_->new_page(table_name_, new_pid);
         if (!guard.is_valid())
-            return 0;
+            return {0, INVALID_PAGE_ID};
 
         auto * leaf = reinterpret_cast<DataPage *>(guard.data());
         leaf->init_as_leaf(new_pid);
@@ -450,29 +545,25 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
     if (leaf_pid == INVALID_PAGE_ID)
     {
         spdlog::error("TableHeap::btree_insert: search_leaf returned invalid page");
-        return 0;
+        return {0, INVALID_PAGE_ID};
     }
 
     auto leaf_guard = buffer_pool_->fetch_page(table_name_, leaf_pid);
     if (!leaf_guard.is_valid())
-        return 0;
+        return {0, INVALID_PAGE_ID};
 
     auto * leaf = reinterpret_cast<DataPage *>(leaf_guard.data());
 
     // Comparator for sorted insert: compare by PK
     auto cmp = [this](const char * a_data, uint16_t a_len, const char * b_data, uint16_t b_len) -> int
-    {
-        auto ka = extract_pk_from_serialized(a_data, a_len);
-        auto kb = extract_pk_from_serialized(b_data, b_len);
-        return compare_pk(ka, kb);
-    };
+    { return compare_tuple_pk(a_data, a_len, b_data, b_len); };
 
     // Try to insert into the leaf
     auto slot_opt = leaf->insert_tuple_sorted(data, len, cmp);
     if (slot_opt.has_value())
     {
         leaf_guard.mark_dirty();
-        return slot_opt.value();
+        return {slot_opt.value(), leaf_pid};
     }
 
     // Leaf is full — split it
@@ -480,7 +571,7 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
     page_id_t new_leaf_pid = 0;
     auto new_leaf_guard = buffer_pool_->new_page(table_name_, new_leaf_pid);
     if (!new_leaf_guard.is_valid())
-        return 0;
+        return {0, INVALID_PAGE_ID};
 
     auto * new_leaf = reinterpret_cast<DataPage *>(new_leaf_guard.data());
     new_leaf->init_as_leaf(new_leaf_pid);
@@ -496,7 +587,6 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
     leaf->compact();
 
     // 4. Insert the new row into the correct page
-    auto new_pk = extract_pk_from_serialized(data, len);
     const char * first_new_data = nullptr;
     uint16_t first_new_len = 0;
     for (uint16_t i = 0; i < new_leaf->slot_count(); i++)
@@ -511,10 +601,12 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
     }
 
     slot_id_t result_slot;
-    if (first_new_data && compare_pk(new_pk, extract_pk_from_serialized(first_new_data, first_new_len)) < 0)
+    page_id_t dest_pid = new_leaf_pid;
+    if (first_new_data && compare_tuple_pk(data, len, first_new_data, first_new_len) < 0)
     {
         // New row belongs in old leaf
         result_slot = leaf->insert_tuple_sorted(data, len, cmp).value_or(0);
+        dest_pid = leaf_pid;
     }
     else
     {
@@ -547,7 +639,7 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
             page_id_t new_root_pid = 0;
             auto root_guard = buffer_pool_->new_page(table_name_, new_root_pid);
             if (!root_guard.is_valid())
-                return result_slot;
+                return {result_slot, dest_pid};
 
             auto * new_root = reinterpret_cast<BTreeInternalPage *>(root_guard.data());
             new_root->init(new_root_pid, 0);
@@ -556,11 +648,7 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
             new_root->set_rightmost_child(leaf_pid);
 
             auto cmp_internal = [this](const char * a, uint16_t al, const char * b, uint16_t bl) -> int
-            {
-                auto ka = extract_pk_from_serialized(a, al);
-                auto kb = extract_pk_from_serialized(b, bl);
-                return compare_pk(ka, kb);
-            };
+            { return compare_tuple_pk(a, al, b, bl); };
             new_root->insert(promoted_data, promoted_len, new_leaf_pid, cmp_internal);
 
             root_page_id_ = new_root_pid;
@@ -574,7 +662,7 @@ slot_id_t TableHeap::btree_insert(const char * data, uint16_t len, const neon::t
         }
     }
 
-    return result_slot;
+    return {result_slot, dest_pid};
 }
 
 // --- Public API ---
@@ -607,9 +695,9 @@ RowId TableHeap::insert_row(neon::txn::Transaction * txn, const Tuple & tuple)
         guard.mark_dirty();
     }
 
-    slot_id_t slot = btree_insert(serialized.data(), data_len, pk);
-    std::vector<page_id_t> dummy_path;
-    leaf_pid = search_leaf_with_path(pk, dummy_path);
+    auto placed = btree_insert(serialized.data(), data_len, pk);
+    slot_id_t slot = placed.first;
+    leaf_pid = placed.second;
     if (slot == 0 && leaf_pid == INVALID_PAGE_ID)
     {
         return RowId{INVALID_PAGE_ID, 0};
@@ -879,9 +967,9 @@ RowId TableHeap::update_row(neon::txn::Transaction * txn, RowId rid, const Tuple
 
         if (!rewritten)
         {
-            new_slot = btree_insert(serialized.data(), data_len, new_pk);
-            std::vector<page_id_t> placed;
-            new_pid = search_leaf_with_path(new_pk, placed);
+            auto placed = btree_insert(serialized.data(), data_len, new_pk);
+            new_slot = placed.first;
+            new_pid = placed.second;
         }
 
         LogRecord record;
@@ -1001,6 +1089,32 @@ std::optional<RowId> TableHeap::lookup_pk(const neon::type::Value & pk) const
     return std::nullopt;
 }
 
+int64_t TableHeap::count_rows() const
+{
+    int64_t count = 0;
+    page_id_t page_id = find_leftmost_leaf();
+    while (page_id != INVALID_PAGE_ID)
+    {
+        auto guard = buffer_pool_->fetch_page(table_name_, page_id);
+        if (!guard.is_valid())
+        {
+            break;
+        }
+        const auto * page = reinterpret_cast<const DataPage *>(guard.data());
+        uint16_t slots = page->slot_count();
+        for (uint16_t i = 0; i < slots; ++i)
+        {
+            auto [data_ptr, len] = page->get_tuple(i);
+            if (data_ptr != nullptr)
+            {
+                count++;
+            }
+        }
+        page_id = page->next_leaf_page();
+    }
+    return count;
+}
+
 TableIterator TableHeap::iter() const
 {
     auto it = TableIterator(const_cast<TableHeap *>(this), schema_);
@@ -1048,8 +1162,21 @@ bool TableIterator::valid() const
 
 Tuple TableIterator::current_tuple() const
 {
-    auto guard = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
-    const auto * page = reinterpret_cast<const DataPage *>(guard.data());
+    const DataPage * page = nullptr;
+    PageGuard fallback;
+    if (page_guard_.is_valid())
+    {
+        page = reinterpret_cast<const DataPage *>(page_guard_.data());
+    }
+    else
+    {
+        fallback = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
+        if (!fallback.is_valid())
+        {
+            return Tuple();
+        }
+        page = reinterpret_cast<const DataPage *>(fallback.data());
+    }
     auto [data_ptr, len] = page->get_tuple(current_slot_id_);
     if (data_ptr == nullptr)
     {
@@ -1078,14 +1205,17 @@ void TableIterator::advance_to_valid()
             return;
         }
 
-        auto guard = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
-        if (!guard.is_valid())
+        if (!page_guard_.is_valid() || page_guard_.page_id() != current_page_id_)
+        {
+            page_guard_ = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
+        }
+        if (!page_guard_.is_valid())
         {
             valid_ = false;
             return;
         }
 
-        const auto * page = reinterpret_cast<const DataPage *>(guard.data());
+        const auto * page = reinterpret_cast<const DataPage *>(page_guard_.data());
         uint16_t slot_cnt = page->slot_count();
 
         while (current_slot_id_ < slot_cnt)
@@ -1102,6 +1232,7 @@ void TableIterator::advance_to_valid()
         // Move to next leaf page
         current_page_id_ = page->next_leaf_page();
         current_slot_id_ = 0;
+        page_guard_ = PageGuard();
     }
 }
 

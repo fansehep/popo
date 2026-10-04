@@ -45,6 +45,7 @@ void TxnManager::commit(Transaction * txn)
     redo_log_->flush();
 
     txn->set_state(TxnState::COMMITTED);
+    remove_txn(txn->txn_id());
 }
 
 void TxnManager::abort(Transaction * txn)
@@ -58,6 +59,7 @@ void TxnManager::abort(Transaction * txn)
     redo_log_->flush();
 
     txn->set_state(TxnState::ABORTED);
+    remove_txn(txn->txn_id());
 }
 
 Transaction * TxnManager::get_txn(neon::storage::txn_id_t txn_id)

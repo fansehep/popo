@@ -3,10 +3,10 @@
 #include <spdlog/spdlog.h>
 #include "server/session.h"
 
-namespace neon::server
+namespace popo::server
 {
 
-Server::Server(uint16_t port, neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine)
+Server::Server(uint16_t port, popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine)
     : acceptor_(io_context_, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)), schema_mgr_(schema_mgr), engine_(engine)
 {
 }
@@ -14,7 +14,7 @@ Server::Server(uint16_t port, neon::catalog::SchemaManager & schema_mgr, neon::s
 void Server::start()
 {
     running_ = true;
-    spdlog::info("Neon server listening on port {}", acceptor_.local_endpoint().port());
+    spdlog::info("PopoDB server listening on port {}", acceptor_.local_endpoint().port());
     do_accept();
     io_context_.run();
 }
@@ -59,4 +59,4 @@ void Server::do_accept()
         });
 }
 
-} // namespace neon::server
+} // namespace popo::server

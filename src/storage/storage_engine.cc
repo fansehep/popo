@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include "spdlog/spdlog.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 StorageEngine::StorageEngine(const std::string & data_dir, size_t buffer_pool_size)
@@ -25,7 +25,7 @@ void StorageEngine::init()
     disk_manager_ = std::make_unique<DiskManager>(data_dir_);
     buffer_pool_ = std::make_unique<BufferPoolManager>(buffer_pool_size_, disk_manager_.get());
     redo_log_ = std::make_unique<RedoLogManager>(data_dir_ + "/redo.log");
-    txn_mgr_ = std::make_unique<neon::txn::TxnManager>(redo_log_.get());
+    txn_mgr_ = std::make_unique<popo::txn::TxnManager>(redo_log_.get());
 
     // Run recovery if there are log records
     recover();
@@ -85,7 +85,7 @@ TableHeap * StorageEngine::get_table_heap(const std::string & table_name)
     return it->second.get();
 }
 
-void StorageEngine::create_table(const std::string & table_name, const neon::catalog::Schema & schema)
+void StorageEngine::create_table(const std::string & table_name, const popo::catalog::Schema & schema)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -116,12 +116,12 @@ void StorageEngine::create_index(const std::string & table_name, const std::stri
     {
         throw std::runtime_error("create index: bad column");
     }
-    neon::catalog::Schema index_schema;
+    popo::catalog::Schema index_schema;
     index_schema.table_name_ = base.table_name_;
-    neon::catalog::Column key = base.columns_[static_cast<size_t>(column)];
+    popo::catalog::Column key = base.columns_[static_cast<size_t>(column)];
     key.column_name_ = "k";
     key.is_primary_key_ = true;
-    neon::catalog::Column pk = base.columns_[static_cast<size_t>(base.primary_key_col_idx_)];
+    popo::catalog::Column pk = base.columns_[static_cast<size_t>(base.primary_key_col_idx_)];
     pk.column_name_ = "pk";
     pk.is_primary_key_ = false;
     index_schema.columns_ = {key, pk};
@@ -147,7 +147,7 @@ bool StorageEngine::table_exists(const std::string & table_name) const
     return table_heaps_.find(table_name) != table_heaps_.end();
 }
 
-neon::txn::Transaction * StorageEngine::begin_txn()
+popo::txn::Transaction * StorageEngine::begin_txn()
 {
     if (!disk_manager_->begin_txn())
     {
@@ -177,7 +177,7 @@ neon::txn::Transaction * StorageEngine::begin_txn()
     }
 }
 
-void StorageEngine::commit_txn(neon::txn::Transaction * txn)
+void StorageEngine::commit_txn(popo::txn::Transaction * txn)
 {
     flush_all();
     disk_manager_->commit_txn();
@@ -188,7 +188,7 @@ void StorageEngine::commit_txn(neon::txn::Transaction * txn)
     txn_mgr_->commit(txn);
 }
 
-void StorageEngine::abort_txn(neon::txn::Transaction * txn)
+void StorageEngine::abort_txn(popo::txn::Transaction * txn)
 {
     if (disk_manager_)
     {
@@ -222,4 +222,4 @@ void StorageEngine::flush_all()
     }
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

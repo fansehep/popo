@@ -7,7 +7,7 @@
 #include "src/storage/disk_manager.h"
 #include "src/storage/page.h"
 
-using namespace neon::storage;
+using namespace popo::storage;
 namespace fs = std::filesystem;
 
 class BufferPoolTest : public ::testing::Test
@@ -20,7 +20,7 @@ protected:
     void SetUp() override
     {
         std::random_device rd;
-        test_dir = fs::temp_directory_path().string() + "/neon_bp_test_" + std::to_string(rd());
+        test_dir = fs::temp_directory_path().string() + "/popo_bp_test_" + std::to_string(rd());
         fs::create_directories(test_dir);
         dm = std::make_unique<DiskManager>(test_dir);
         dm->create_table_file("t1");

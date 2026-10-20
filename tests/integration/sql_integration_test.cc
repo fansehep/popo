@@ -1,8 +1,8 @@
 /**
- * SQL Integration Test: Compare Neon database results with MySQL 8.0
+ * SQL Integration Test: Compare PopoDB database results with MySQL 8.0
  *
- * Starts Neon server in background, executes identical SQL on both
- * Neon and MySQL 8.0 container, then compares results.
+ * Starts PopoDB server in background, executes identical SQL on both
+ * PopoDB and MySQL 8.0 container, then compares results.
  */
 #include <algorithm>
 #include <chrono>
@@ -25,26 +25,26 @@
 class SQLIntegrationTest : public ::testing::Test
 {
 protected:
-    // Neon server components
-    std::unique_ptr<neon::catalog::SchemaManager> schema_mgr_;
-    std::unique_ptr<neon::storage::StorageEngine> storage_engine_;
-    std::unique_ptr<neon::server::Server> neon_server_;
-    std::thread neon_thread_;
+    // PopoDB server components
+    std::unique_ptr<popo::catalog::SchemaManager> schema_mgr_;
+    std::unique_ptr<popo::storage::StorageEngine> storage_engine_;
+    std::unique_ptr<popo::server::Server> popo_server_;
+    std::thread popo_thread_;
 
     // MySQL connections
     MYSQL * mysql_conn_ = nullptr;
-    MYSQL * neon_conn_ = nullptr;
+    MYSQL * popo_conn_ = nullptr;
 
-    static constexpr uint16_t NEON_PORT = 3307;
+    static constexpr uint16_t POPO_PORT = 3307;
 
     void SetUp() override
     {
-        // 1) Start Neon server in background thread
-        schema_mgr_ = std::make_unique<neon::catalog::SchemaManager>();
-        storage_engine_ = std::make_unique<neon::storage::StorageEngine>("test_data");
+        // 1) Start PopoDB server in background thread
+        schema_mgr_ = std::make_unique<popo::catalog::SchemaManager>();
+        storage_engine_ = std::make_unique<popo::storage::StorageEngine>("test_data");
         storage_engine_->init();
-        neon_server_ = std::make_unique<neon::server::Server>(NEON_PORT, *schema_mgr_, *storage_engine_);
-        neon_thread_ = std::thread([this]() { neon_server_->start(); });
+        popo_server_ = std::make_unique<popo::server::Server>(POPO_PORT, *schema_mgr_, *storage_engine_);
+        popo_thread_ = std::thread([this]() { popo_server_->start(); });
         // give the server a moment to bind
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
@@ -54,16 +54,16 @@ protected:
         MYSQL * m = mysql_real_connect(mysql_conn_, "127.0.0.1", "root", "testpass", "testdb", 3306, nullptr, 0);
         ASSERT_NE(m, nullptr) << "MySQL 8.0 connect failed: " << mysql_error(mysql_conn_);
 
-        // 3) Connect to Neon server
-        neon_conn_ = mysql_init(nullptr);
-        ASSERT_NE(neon_conn_, nullptr);
-        MYSQL * n = mysql_real_connect(neon_conn_, "127.0.0.1", "root", "", "neon", NEON_PORT, nullptr, 0);
-        // Neon may reject "neon" as db; retry without db if needed
+        // 3) Connect to PopoDB server
+        popo_conn_ = mysql_init(nullptr);
+        ASSERT_NE(popo_conn_, nullptr);
+        MYSQL * n = mysql_real_connect(popo_conn_, "127.0.0.1", "root", "", "popo", POPO_PORT, nullptr, 0);
+        // PopoDB may reject "popo" as db; retry without db if needed
         if (!n)
         {
-            n = mysql_real_connect(neon_conn_, "127.0.0.1", "root", "", nullptr, NEON_PORT, nullptr, 0);
+            n = mysql_real_connect(popo_conn_, "127.0.0.1", "root", "", nullptr, POPO_PORT, nullptr, 0);
         }
-        ASSERT_NE(n, nullptr) << "Neon connect failed: " << mysql_error(neon_conn_);
+        ASSERT_NE(n, nullptr) << "PopoDB connect failed: " << mysql_error(popo_conn_);
     }
 
     void TearDown() override
@@ -74,20 +74,20 @@ protected:
             mysql_close(mysql_conn_);
             mysql_conn_ = nullptr;
         }
-        if (neon_conn_)
+        if (popo_conn_)
         {
-            mysql_close(neon_conn_);
-            neon_conn_ = nullptr;
+            mysql_close(popo_conn_);
+            popo_conn_ = nullptr;
         }
 
-        // Stop Neon server
-        if (neon_server_)
+        // Stop PopoDB server
+        if (popo_server_)
         {
-            neon_server_->stop();
+            popo_server_->stop();
         }
-        if (neon_thread_.joinable())
+        if (popo_thread_.joinable())
         {
-            neon_thread_.join();
+            popo_thread_.join();
         }
         // Brief delay to let detached session threads notice closed socket and exit
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -180,55 +180,55 @@ protected:
         if (mysql_rc != 0)
         {
             mysql_err = mysql_error(mysql_conn_);
-            // If MySQL fails, Neon should also fail (skip comparison)
+            // If MySQL fails, PopoDB should also fail (skip comparison)
         }
         auto mysql_data = (mysql_rc == 0) ? FetchResult(mysql_conn_) : TableData{};
 
-        // Execute on Neon
-        int neon_rc = mysql_query(neon_conn_, sql.c_str());
-        std::string neon_err;
-        if (neon_rc != 0)
+        // Execute on PopoDB
+        int popo_rc = mysql_query(popo_conn_, sql.c_str());
+        std::string popo_err;
+        if (popo_rc != 0)
         {
-            neon_err = mysql_error(neon_conn_);
+            popo_err = mysql_error(popo_conn_);
         }
-        auto neon_data = (neon_rc == 0) ? FetchResult(neon_conn_) : TableData{};
+        auto popo_data = (popo_rc == 0) ? FetchResult(popo_conn_) : TableData{};
 
-        // If MySQL failed, Neon should also fail
+        // If MySQL failed, PopoDB should also fail
         if (mysql_rc != 0)
         {
-            EXPECT_NE(neon_rc, 0) << "SQL [" << sql << "]\n"
+            EXPECT_NE(popo_rc, 0) << "SQL [" << sql << "]\n"
                                   << "MySQL error: " << mysql_err << "\n"
-                                  << "Neon unexpectedly succeeded.\n"
-                                  << DumpTable(neon_data);
+                                  << "PopoDB unexpectedly succeeded.\n"
+                                  << DumpTable(popo_data);
             return;
         }
 
         // Both succeeded: compare
-        ASSERT_EQ(neon_rc, 0) << "SQL [" << sql << "]\n"
-                              << "MySQL succeeded but Neon failed: " << neon_err;
+        ASSERT_EQ(popo_rc, 0) << "SQL [" << sql << "]\n"
+                              << "MySQL succeeded but PopoDB failed: " << popo_err;
 
-        EXPECT_EQ(mysql_data.columns.size(), neon_data.columns.size())
+        EXPECT_EQ(mysql_data.columns.size(), popo_data.columns.size())
             << "Column count mismatch for [" << sql << "]\n"
-            << "MySQL: " << DumpTable(mysql_data) << "Neon: " << DumpTable(neon_data);
+            << "MySQL: " << DumpTable(mysql_data) << "PopoDB: " << DumpTable(popo_data);
 
-        EXPECT_EQ(mysql_data.rows.size(), neon_data.rows.size()) << "Row count mismatch for [" << sql << "]\n"
-                                                                 << "MySQL: " << DumpTable(mysql_data) << "Neon: " << DumpTable(neon_data);
+        EXPECT_EQ(mysql_data.rows.size(), popo_data.rows.size()) << "Row count mismatch for [" << sql << "]\n"
+                                                                 << "MySQL: " << DumpTable(mysql_data) << "PopoDB: " << DumpTable(popo_data);
 
         // Sort both for order-independent comparison
         SortRows(mysql_data);
-        SortRows(neon_data);
+        SortRows(popo_data);
 
-        EXPECT_EQ(mysql_data.rows, neon_data.rows) << "Result mismatch for [" << sql << "]\n"
-                                                   << "MySQL: " << DumpTable(mysql_data) << "Neon: " << DumpTable(neon_data);
+        EXPECT_EQ(mysql_data.rows, popo_data.rows) << "Result mismatch for [" << sql << "]\n"
+                                                   << "MySQL: " << DumpTable(mysql_data) << "PopoDB: " << DumpTable(popo_data);
     }
 
-    // Execute SQL on both, but only check that Neon doesn't crash
+    // Execute SQL on both, but only check that PopoDB doesn't crash
     void AssertSQLOk(const std::string & sql)
     {
-        int neon_rc = mysql_query(neon_conn_, sql.c_str());
-        if (neon_rc != 0)
+        int popo_rc = mysql_query(popo_conn_, sql.c_str());
+        if (popo_rc != 0)
         {
-            ADD_FAILURE() << "Neon failed on [" << sql << "]: " << mysql_error(neon_conn_);
+            ADD_FAILURE() << "PopoDB failed on [" << sql << "]: " << mysql_error(popo_conn_);
         }
     }
 };

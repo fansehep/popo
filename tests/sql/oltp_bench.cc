@@ -53,32 +53,32 @@ void record(const char * suite, const char * workload, int64_t ops, std::chrono:
     g_samples.push_back(s);
 }
 
-int64_t num(const neon::type::Value & v)
+int64_t num(const popo::type::Value & v)
 {
     switch (v.datatype())
     {
-        case neon::type::ValueType::Int8:
+        case popo::type::ValueType::Int8:
             return v.i8();
-        case neon::type::ValueType::Int16:
+        case popo::type::ValueType::Int16:
             return v.i16();
-        case neon::type::ValueType::Int32:
+        case popo::type::ValueType::Int32:
             return v.i32();
-        case neon::type::ValueType::Int64:
+        case popo::type::ValueType::Int64:
             return v.i64();
-        case neon::type::ValueType::Uint8:
+        case popo::type::ValueType::Uint8:
             return v.u8();
-        case neon::type::ValueType::Uint16:
+        case popo::type::ValueType::Uint16:
             return v.u16();
-        case neon::type::ValueType::Uint32:
+        case popo::type::ValueType::Uint32:
             return static_cast<int64_t>(v.u32());
-        case neon::type::ValueType::Uint64:
+        case popo::type::ValueType::Uint64:
             return static_cast<int64_t>(v.u64());
         default:
-            throw std::runtime_error(std::string("expected integer, got ") + neon::type::type_to_string(v.datatype()));
+            throw std::runtime_error(std::string("expected integer, got ") + popo::type::type_to_string(v.datatype()));
     }
 }
 
-neon::bytecode::ExecuteSuccess must(neon::test::SqlRunner & db, const std::string & sql)
+popo::bytecode::ExecuteSuccess must(popo::test::SqlRunner & db, const std::string & sql)
 {
     auto res = db.exec(sql);
     if (!res.ok)
@@ -88,7 +88,7 @@ neon::bytecode::ExecuteSuccess must(neon::test::SqlRunner & db, const std::strin
     return std::move(res.result);
 }
 
-neon::bytecode::ExecuteSuccess must(neon::test::SqlTxn & txn, const std::string & sql)
+popo::bytecode::ExecuteSuccess must(popo::test::SqlTxn & txn, const std::string & sql)
 {
     auto res = txn.exec(sql);
     if (!res.ok)
@@ -98,7 +98,7 @@ neon::bytecode::ExecuteSuccess must(neon::test::SqlTxn & txn, const std::string 
     return std::move(res.result);
 }
 
-void expect_write(const neon::bytecode::ExecuteSuccess & result, const std::string & sql)
+void expect_write(const popo::bytecode::ExecuteSuccess & result, const std::string & sql)
 {
     if (result.rows_affected < 1)
     {
@@ -106,7 +106,7 @@ void expect_write(const neon::bytecode::ExecuteSuccess & result, const std::stri
     }
 }
 
-int64_t cell(const neon::bytecode::ExecuteSuccess & result, size_t col = 0)
+int64_t cell(const popo::bytecode::ExecuteSuccess & result, size_t col = 0)
 {
     if (result.rows.empty() || col >= result.rows[0]->values_.size())
     {
@@ -136,7 +136,7 @@ std::string field(int width, int salt)
     return s;
 }
 
-void load_values(neon::test::SqlRunner & db, const std::string & prefix, const std::vector<std::string> & tuples, int batch)
+void load_values(popo::test::SqlRunner & db, const std::string & prefix, const std::vector<std::string> & tuples, int batch)
 {
     for (size_t i = 0; i < tuples.size();)
     {
@@ -217,7 +217,7 @@ void run_sysbench()
     constexpr int kRows = 2000;
     constexpr int kOps = 200;
     std::cout << ">> sysbench\n";
-    neon::test::SqlRunner db(prepare_dir("sysbench"));
+    popo::test::SqlRunner db(prepare_dir("sysbench"));
     must(db, "CREATE TABLE sbtest1 (id INT PRIMARY KEY, k INT, c VARCHAR(120), pad VARCHAR(60))");
 
     auto t0 = std::chrono::steady_clock::now();
@@ -315,7 +315,7 @@ void run_pgbench()
     constexpr int kTellers = 10;
     constexpr int kTxns = 200;
     std::cout << ">> pgbench\n";
-    neon::test::SqlRunner db(prepare_dir("pgbench"));
+    popo::test::SqlRunner db(prepare_dir("pgbench"));
     must(db, "CREATE TABLE pgbench_branches (bid INT PRIMARY KEY, bbalance INT)");
     must(db, "CREATE TABLE pgbench_tellers (tid INT PRIMARY KEY, bid INT, tbalance INT)");
     must(db, "CREATE TABLE pgbench_accounts (aid INT PRIMARY KEY, bid INT, abalance INT)");
@@ -364,7 +364,7 @@ void run_ycsb()
     constexpr int kFields = 10;
     constexpr int kWidth = 100;
     std::cout << ">> ycsb\n";
-    neon::test::SqlRunner db(prepare_dir("ycsb"));
+    popo::test::SqlRunner db(prepare_dir("ycsb"));
     std::string ddl = "CREATE TABLE usertable (id INT PRIMARY KEY";
     for (int f = 0; f < kFields; ++f)
     {
@@ -441,7 +441,7 @@ void run_tpcc()
     constexpr int kPayment = 30;
     constexpr int kCustomers = kDistricts * kCustomersPer;
     std::cout << ">> tpcc\n";
-    neon::test::SqlRunner db(prepare_dir("tpcc"));
+    popo::test::SqlRunner db(prepare_dir("tpcc"));
     must(db, "CREATE TABLE warehouse (w_id INT PRIMARY KEY, w_ytd INT, w_name VARCHAR(16))");
     must(db, "CREATE TABLE district (d_id INT PRIMARY KEY, d_ytd INT, d_next_o_id INT, d_name VARCHAR(16))");
     must(db, "CREATE TABLE customer (c_id INT PRIMARY KEY, c_d_id INT, c_balance INT, c_last VARCHAR(16))");
@@ -597,7 +597,7 @@ void run_smallbank()
     constexpr int kCustomers = 1000;
     constexpr int kOps = 80;
     std::cout << ">> smallbank\n";
-    neon::test::SqlRunner db(prepare_dir("smallbank"));
+    popo::test::SqlRunner db(prepare_dir("smallbank"));
     must(db, "CREATE TABLE accounts (custid INT PRIMARY KEY, name VARCHAR(16))");
     must(db, "CREATE TABLE savings (custid INT PRIMARY KEY, bal INT)");
     must(db, "CREATE TABLE checking (custid INT PRIMARY KEY, bal INT)");
@@ -679,7 +679,7 @@ void run_tatp()
     constexpr int kSubs = 1000;
     constexpr int kOps = 60;
     std::cout << ">> tatp\n";
-    neon::test::SqlRunner db(prepare_dir("tatp"));
+    popo::test::SqlRunner db(prepare_dir("tatp"));
     must(db, "CREATE TABLE subscriber (s_id INT PRIMARY KEY, sub_nbr VARCHAR(15), bit_1 INT, hex_1 INT, vlr_location INT)");
     must(db, "CREATE TABLE access_info (s_id INT PRIMARY KEY, data1 INT, data2 INT)");
     must(db, "CREATE TABLE special_facility (s_id INT PRIMARY KEY, sf_type INT, is_active INT)");
@@ -765,7 +765,7 @@ void run_tpce()
     constexpr int kSecurities = 100;
     constexpr int kTxns = 40;
     std::cout << ">> tpce\n";
-    neon::test::SqlRunner db(prepare_dir("tpce"));
+    popo::test::SqlRunner db(prepare_dir("tpce"));
     must(db, "CREATE TABLE customer_account (ca_id INT PRIMARY KEY, balance INT)");
     must(db, "CREATE TABLE security (s_id INT PRIMARY KEY, price INT)");
     must(db, "CREATE TABLE holding (h_id INT PRIMARY KEY, qty INT)");
@@ -813,7 +813,7 @@ void run_wikipedia()
     constexpr int kUsers = 50;
     constexpr int kOps = 40;
     std::cout << ">> wikipedia\n";
-    neon::test::SqlRunner db(prepare_dir("wikipedia"));
+    popo::test::SqlRunner db(prepare_dir("wikipedia"));
     must(db, "CREATE TABLE useracct (user_id INT PRIMARY KEY, user_name VARCHAR(16))");
     must(db, "CREATE TABLE page (page_id INT PRIMARY KEY, latest INT, page_title VARCHAR(32))");
     must(db, "CREATE TABLE revision (rev_id INT PRIMARY KEY, page_id INT, user_id INT, rev_text VARCHAR(64))");
@@ -859,7 +859,7 @@ void run_auctionmark()
     constexpr int kItems = 400;
     constexpr int kOps = 40;
     std::cout << ">> auctionmark\n";
-    neon::test::SqlRunner db(prepare_dir("auctionmark"));
+    popo::test::SqlRunner db(prepare_dir("auctionmark"));
     must(db, "CREATE TABLE item (i_id INT PRIMARY KEY, price INT, num_bids INT, i_name VARCHAR(24))");
     must(db, "CREATE TABLE bid (b_id INT PRIMARY KEY, i_id INT, amount INT)");
 

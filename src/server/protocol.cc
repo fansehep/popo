@@ -1,6 +1,6 @@
 #include "server/protocol.h"
 
-namespace neon::server
+namespace popo::server
 {
 
 std::vector<uint8_t> Protocol::make_packet(uint8_t seq_id, const std::vector<uint8_t> & payload)
@@ -141,7 +141,7 @@ std::vector<uint8_t> Protocol::build_handshake_v10(uint32_t connection_id)
 {
     std::vector<uint8_t> payload;
     payload.push_back(10);
-    write_null_string(payload, "neon-database-v0.1");
+    write_null_string(payload, "popodb-database-v0.1");
     write_int4(payload, connection_id);
     for (int i = 0; i < 8; ++i)
         payload.push_back(0);
@@ -260,4 +260,4 @@ std::string Protocol::read_query_string(const uint8_t * payload, size_t length)
     return std::string(reinterpret_cast<const char *>(payload + 1), length - 1);
 }
 
-} // namespace neon::server
+} // namespace popo::server

@@ -12,13 +12,13 @@
 #include "src/storage/storage_engine.h"
 #include "src/type/tuple.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
 // Primary-key point select: SELECT col FROM table WHERE pk = int
 // Anything else returns nullopt and the caller uses the full parser.
 inline std::optional<ExecuteSuccess> try_point_select(
-    neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine, std::string_view sql)
+    popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine, std::string_view sql)
 {
     auto skip = [&](size_t & i) {
         while (i < sql.size() && std::isspace(static_cast<unsigned char>(sql[i])))
@@ -139,7 +139,7 @@ inline std::optional<ExecuteSuccess> try_point_select(
     {
         return std::nullopt;
     }
-    const neon::catalog::Schema & schema = *schema_result.value();
+    const popo::catalog::Schema & schema = *schema_result.value();
     int32_t pk = schema.primary_key_col_idx_;
     if (pk < 0 || static_cast<size_t>(pk) >= schema.columns_.size() || schema.columns_[static_cast<size_t>(pk)].column_name_ != pk_column)
     {
@@ -158,7 +158,7 @@ inline std::optional<ExecuteSuccess> try_point_select(
     {
         return std::nullopt;
     }
-    neon::storage::TableHeap * heap = engine.get_table_heap(table);
+    popo::storage::TableHeap * heap = engine.get_table_heap(table);
     if (heap == nullptr)
     {
         return std::nullopt;
@@ -166,7 +166,7 @@ inline std::optional<ExecuteSuccess> try_point_select(
 
     ExecuteSuccess result;
     result.columns.push_back(column);
-    auto rid = heap->lookup_pk(neon::type::Value(neon::type::ValueType::Int64, key));
+    auto rid = heap->lookup_pk(popo::type::Value(popo::type::ValueType::Int64, key));
     if (!rid.has_value())
     {
         return result;
@@ -176,10 +176,10 @@ inline std::optional<ExecuteSuccess> try_point_select(
     {
         return result;
     }
-    auto out = std::make_shared<neon::type::Row>();
-    out->append_value(neon::storage::RowSerializer::read_column(tuple->data(), tuple->size(), schema, col));
+    auto out = std::make_shared<popo::type::Row>();
+    out->append_value(popo::storage::RowSerializer::read_column(tuple->data(), tuple->size(), schema, col));
     result.rows.push_back(std::move(out));
     return result;
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

@@ -5,7 +5,7 @@
 #include "src/storage/common.h"
 #include "src/storage/page.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // ============================================================================
@@ -304,4 +304,4 @@ private:
 
 static_assert(sizeof(BTreeInternalPage) == PAGE_SIZE);
 
-} // namespace neon::storage
+} // namespace popo::storage

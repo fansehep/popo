@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <string>
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
 enum class OpCode : uint8_t
@@ -209,4 +209,4 @@ inline std::string opcode_name(OpCode op)
     }
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

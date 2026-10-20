@@ -14,35 +14,35 @@
 #include "src/planner/plan_node.h"
 #include "src/type/value.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 namespace
 {
 
 // Helper: create a simple schema for testing
-neon::catalog::Schema make_users_schema()
+popo::catalog::Schema make_users_schema()
 {
-    neon::catalog::Schema schema;
+    popo::catalog::Schema schema;
     schema.id_ = 1;
     schema.table_name_ = "users";
     schema.primary_key_col_idx_ = 0;
 
-    neon::catalog::Column id_col;
+    popo::catalog::Column id_col;
     id_col.column_name_ = "id";
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
     schema.columns_.push_back(id_col);
 
-    neon::catalog::Column name_col;
+    popo::catalog::Column name_col;
     name_col.column_name_ = "name";
-    name_col.data_type_ = neon::type::ValueType::String;
+    name_col.data_type_ = popo::type::ValueType::String;
     name_col.is_nullable_ = true;
     schema.columns_.push_back(name_col);
 
-    neon::catalog::Column age_col;
+    popo::catalog::Column age_col;
     age_col.column_name_ = "age";
-    age_col.data_type_ = neon::type::ValueType::Int32;
+    age_col.data_type_ = popo::type::ValueType::Int32;
     age_col.is_nullable_ = true;
     schema.columns_.push_back(age_col);
 
@@ -50,43 +50,43 @@ neon::catalog::Schema make_users_schema()
 }
 
 // Helper: register a table in SchemaManager
-void register_table(neon::catalog::SchemaManager & mgr, const neon::catalog::Schema & schema)
+void register_table(popo::catalog::SchemaManager & mgr, const popo::catalog::Schema & schema)
 {
     mgr.create_table(schema.table_name_, schema.columns_);
 }
 
 // Helper: make a LiteralExpr
-std::shared_ptr<neon::parser::LiteralExpr> make_literal(neon::type::Value v)
+std::shared_ptr<popo::parser::LiteralExpr> make_literal(popo::type::Value v)
 {
-    auto e = std::make_shared<neon::parser::LiteralExpr>();
+    auto e = std::make_shared<popo::parser::LiteralExpr>();
     e->value = std::move(v);
     return e;
 }
 
-std::shared_ptr<neon::parser::LiteralExpr> make_int_literal(int32_t val)
+std::shared_ptr<popo::parser::LiteralExpr> make_int_literal(int32_t val)
 {
-    return make_literal(neon::type::Value(neon::type::ValueType::Int32, val));
+    return make_literal(popo::type::Value(popo::type::ValueType::Int32, val));
 }
 
-std::shared_ptr<neon::parser::LiteralExpr> make_str_literal(const std::string & s)
+std::shared_ptr<popo::parser::LiteralExpr> make_str_literal(const std::string & s)
 {
-    return make_literal(neon::type::Value(neon::type::ValueType::String, s));
+    return make_literal(popo::type::Value(popo::type::ValueType::String, s));
 }
 
 // Helper: make a ColumnRefExpr
-std::shared_ptr<neon::parser::ColumnRefExpr> make_col_ref(const std::string & table, const std::string & col)
+std::shared_ptr<popo::parser::ColumnRefExpr> make_col_ref(const std::string & table, const std::string & col)
 {
-    auto e = std::make_shared<neon::parser::ColumnRefExpr>();
+    auto e = std::make_shared<popo::parser::ColumnRefExpr>();
     e->table_name = table;
     e->column_name = col;
     return e;
 }
 
 // Helper: make a BinaryOpExpr
-std::shared_ptr<neon::parser::BinaryOpExpr>
-make_binary(neon::parser::BinaryOpType op, neon::parser::ExprPtr left, neon::parser::ExprPtr right)
+std::shared_ptr<popo::parser::BinaryOpExpr>
+make_binary(popo::parser::BinaryOpType op, popo::parser::ExprPtr left, popo::parser::ExprPtr right)
 {
-    auto e = std::make_shared<neon::parser::BinaryOpExpr>();
+    auto e = std::make_shared<popo::parser::BinaryOpExpr>();
     e->op = op;
     e->left = std::move(left);
     e->right = std::move(right);
@@ -94,9 +94,9 @@ make_binary(neon::parser::BinaryOpType op, neon::parser::ExprPtr left, neon::par
 }
 
 // Helper: make a FunctionCallExpr
-std::shared_ptr<neon::parser::FunctionCallExpr> make_func(neon::parser::AggFuncType func, std::vector<neon::parser::ExprPtr> args)
+std::shared_ptr<popo::parser::FunctionCallExpr> make_func(popo::parser::AggFuncType func, std::vector<popo::parser::ExprPtr> args)
 {
-    auto e = std::make_shared<neon::parser::FunctionCallExpr>();
+    auto e = std::make_shared<popo::parser::FunctionCallExpr>();
     e->func = func;
     e->args = std::move(args);
     return e;
@@ -125,7 +125,7 @@ bool has_opcode(const Program & prog, OpCode target)
 class CompilerTest : public ::testing::Test
 {
 protected:
-    neon::catalog::SchemaManager schema_mgr_;
+    popo::catalog::SchemaManager schema_mgr_;
     Compiler compiler{schema_mgr_};
 
     void SetUp() override { register_table(schema_mgr_, make_users_schema()); }
@@ -135,7 +135,7 @@ protected:
 
 TEST_F(CompilerTest, CompileScan)
 {
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
@@ -154,7 +154,7 @@ TEST_F(CompilerTest, CompileScan)
 
 TEST_F(CompilerTest, CompileScanHasCorrectResultColumns)
 {
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
@@ -165,7 +165,7 @@ TEST_F(CompilerTest, CompileScanHasCorrectResultColumns)
 
 TEST_F(CompilerTest, CompileInsert)
 {
-    auto insert = std::make_shared<neon::planner::InsertNode>();
+    auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "users";
     insert->values.resize(1);
     insert->values[0].push_back(make_int_literal(1));
@@ -184,7 +184,7 @@ TEST_F(CompilerTest, CompileInsert)
 
 TEST_F(CompilerTest, CompileInsertMultipleRows)
 {
-    auto insert = std::make_shared<neon::planner::InsertNode>();
+    auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "users";
     insert->values.resize(2);
     insert->values[0].push_back(make_int_literal(1));
@@ -204,11 +204,11 @@ TEST_F(CompilerTest, CompileInsertMultipleRows)
 
 TEST_F(CompilerTest, CompileCreateTable)
 {
-    auto ct = std::make_shared<neon::planner::CreateTableNode>();
+    auto ct = std::make_shared<popo::planner::CreateTableNode>();
     ct->table_name = "products";
-    neon::parser::ColumnDef col;
+    popo::parser::ColumnDef col;
     col.name = "id";
-    col.data_type = neon::type::ValueType::Int32;
+    col.data_type = popo::type::ValueType::Int32;
     col.is_primary_key = true;
     ct->columns.push_back(col);
 
@@ -222,7 +222,7 @@ TEST_F(CompilerTest, CompileCreateTable)
 
 TEST_F(CompilerTest, CompileDropTable)
 {
-    auto dt = std::make_shared<neon::planner::DropTableNode>();
+    auto dt = std::make_shared<popo::planner::DropTableNode>();
     dt->table_name = "users";
     dt->if_exists = false;
 
@@ -234,7 +234,7 @@ TEST_F(CompilerTest, CompileDropTable)
 
 TEST_F(CompilerTest, CompileDropTableIfExists)
 {
-    auto dt = std::make_shared<neon::planner::DropTableNode>();
+    auto dt = std::make_shared<popo::planner::DropTableNode>();
     dt->table_name = "users";
     dt->if_exists = true;
 
@@ -255,7 +255,7 @@ TEST_F(CompilerTest, CompileDropTableIfExists)
 
 TEST_F(CompilerTest, CompileDeleteAll)
 {
-    auto del = std::make_shared<neon::planner::DeleteNode>();
+    auto del = std::make_shared<popo::planner::DeleteNode>();
     del->table_name = "users";
     del->where_clause = nullptr; // DELETE all
 
@@ -271,9 +271,9 @@ TEST_F(CompilerTest, CompileDeleteAll)
 
 TEST_F(CompilerTest, CompileDeleteWithWhere)
 {
-    auto del = std::make_shared<neon::planner::DeleteNode>();
+    auto del = std::make_shared<popo::planner::DeleteNode>();
     del->table_name = "users";
-    del->where_clause = make_binary(neon::parser::BinaryOpType::Eq, make_col_ref("", "id"), make_int_literal(42));
+    del->where_clause = make_binary(popo::parser::BinaryOpType::Eq, make_col_ref("", "id"), make_int_literal(42));
 
     auto prog = compiler.compile(del).value();
 
@@ -285,11 +285,11 @@ TEST_F(CompilerTest, CompileDeleteWithWhere)
 
 TEST_F(CompilerTest, CompileUpdateAll)
 {
-    auto upd = std::make_shared<neon::planner::UpdateNode>();
+    auto upd = std::make_shared<popo::planner::UpdateNode>();
     upd->table_name = "users";
     upd->where_clause = nullptr;
 
-    neon::parser::UpdateAssignment assign;
+    popo::parser::UpdateAssignment assign;
     assign.column_name = "age";
     assign.value = make_int_literal(99);
     upd->assignments.push_back(assign);
@@ -305,11 +305,11 @@ TEST_F(CompilerTest, CompileUpdateAll)
 
 TEST_F(CompilerTest, CompileUpdateWithWhere)
 {
-    auto upd = std::make_shared<neon::planner::UpdateNode>();
+    auto upd = std::make_shared<popo::planner::UpdateNode>();
     upd->table_name = "users";
-    upd->where_clause = make_binary(neon::parser::BinaryOpType::Gt, make_col_ref("", "age"), make_int_literal(18));
+    upd->where_clause = make_binary(popo::parser::BinaryOpType::Gt, make_col_ref("", "age"), make_int_literal(18));
 
-    neon::parser::UpdateAssignment assign;
+    popo::parser::UpdateAssignment assign;
     assign.column_name = "name";
     assign.value = make_str_literal("adult");
     upd->assignments.push_back(assign);
@@ -325,15 +325,15 @@ TEST_F(CompilerTest, CompileUpdateWithWhere)
 TEST_F(CompilerTest, CompileSelectSimple)
 {
     // Build: SELECT id, name FROM users WHERE age > 18
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto filter = std::make_shared<neon::planner::FilterNode>();
+    auto filter = std::make_shared<popo::planner::FilterNode>();
     filter->child = scan;
-    filter->condition = make_binary(neon::parser::BinaryOpType::Gt, make_col_ref("", "age"), make_int_literal(18));
+    filter->condition = make_binary(popo::parser::BinaryOpType::Gt, make_col_ref("", "age"), make_int_literal(18));
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = filter;
     project->expressions.push_back(make_col_ref("", "id"));
     project->expressions.push_back(make_col_ref("", "name"));
@@ -354,13 +354,13 @@ TEST_F(CompilerTest, CompileSelectSimple)
 TEST_F(CompilerTest, CompileSelectStar)
 {
     // Build: SELECT * FROM users
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto star = std::make_shared<neon::parser::StarExpr>();
+    auto star = std::make_shared<popo::parser::StarExpr>();
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = scan;
     project->expressions.push_back(star);
     project->output_names = {"id", "name", "age"};
@@ -377,15 +377,15 @@ TEST_F(CompilerTest, CompileSelectStar)
 
 TEST_F(CompilerTest, CompileSelectWithLimit)
 {
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto limit = std::make_shared<neon::planner::LimitNode>();
+    auto limit = std::make_shared<popo::planner::LimitNode>();
     limit->child = scan;
     limit->limit_count = 5;
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = limit;
     project->expressions.push_back(make_col_ref("", "id"));
     project->output_names = {"id"};
@@ -402,19 +402,19 @@ TEST_F(CompilerTest, CompileSelectWithLimit)
 TEST_F(CompilerTest, CompileSelectWithAgg)
 {
     // Build: SELECT COUNT(*), AVG(age) FROM users
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto agg = std::make_shared<neon::planner::AggNode>();
+    auto agg = std::make_shared<popo::planner::AggNode>();
     agg->child = scan;
 
-    auto count_star = make_func(neon::parser::AggFuncType::Count, {});
-    auto avg_age = make_func(neon::parser::AggFuncType::Avg, {make_col_ref("", "age")});
+    auto count_star = make_func(popo::parser::AggFuncType::Count, {});
+    auto avg_age = make_func(popo::parser::AggFuncType::Avg, {make_col_ref("", "age")});
     agg->agg_exprs.push_back(count_star);
     agg->agg_exprs.push_back(avg_age);
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = agg;
     project->expressions.push_back(count_star);
     project->expressions.push_back(avg_age);
@@ -434,18 +434,18 @@ TEST_F(CompilerTest, CompileSelectWithAgg)
 TEST_F(CompilerTest, CompileSelectWithSort)
 {
     // Build: SELECT id, name FROM users ORDER BY age DESC
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto sort = std::make_shared<neon::planner::SortNode>();
+    auto sort = std::make_shared<popo::planner::SortNode>();
     sort->child = scan;
-    neon::parser::OrderByItem item;
+    popo::parser::OrderByItem item;
     item.expr = make_col_ref("", "age");
     item.ascending = false;
     sort->order_by.push_back(item);
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = sort;
     project->expressions.push_back(make_col_ref("", "id"));
     project->expressions.push_back(make_col_ref("", "name"));
@@ -468,36 +468,36 @@ TEST_F(CompilerTest, CompileSelectWithSort)
 TEST_F(CompilerTest, CompileSelectWithJoin)
 {
     // Register second table
-    neon::catalog::Schema orders_schema;
+    popo::catalog::Schema orders_schema;
     orders_schema.id_ = 2;
     orders_schema.table_name_ = "orders";
     orders_schema.primary_key_col_idx_ = 0;
-    neon::catalog::Column oid_col;
+    popo::catalog::Column oid_col;
     oid_col.column_name_ = "id";
-    oid_col.data_type_ = neon::type::ValueType::Int32;
+    oid_col.data_type_ = popo::type::ValueType::Int32;
     oid_col.is_primary_key_ = true;
     oid_col.is_nullable_ = false;
     orders_schema.columns_.push_back(oid_col);
-    neon::catalog::Column uid_col;
+    popo::catalog::Column uid_col;
     uid_col.column_name_ = "user_id";
-    uid_col.data_type_ = neon::type::ValueType::Int32;
+    uid_col.data_type_ = popo::type::ValueType::Int32;
     orders_schema.columns_.push_back(uid_col);
     register_table(schema_mgr_, orders_schema);
 
-    auto left_scan = std::make_shared<neon::planner::ScanNode>();
+    auto left_scan = std::make_shared<popo::planner::ScanNode>();
     left_scan->table_name = "users";
     left_scan->column_names = {"id", "name", "age"};
 
-    auto right_scan = std::make_shared<neon::planner::ScanNode>();
+    auto right_scan = std::make_shared<popo::planner::ScanNode>();
     right_scan->table_name = "orders";
     right_scan->column_names = {"id", "user_id"};
 
-    auto join = std::make_shared<neon::planner::JoinNode>();
+    auto join = std::make_shared<popo::planner::JoinNode>();
     join->left = left_scan;
     join->right = right_scan;
-    join->condition = make_binary(neon::parser::BinaryOpType::Eq, make_col_ref("users", "id"), make_col_ref("orders", "user_id"));
+    join->condition = make_binary(popo::parser::BinaryOpType::Eq, make_col_ref("users", "id"), make_col_ref("orders", "user_id"));
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = join;
     project->expressions.push_back(make_col_ref("users", "id"));
     project->expressions.push_back(make_col_ref("users", "name"));
@@ -524,7 +524,7 @@ TEST_F(CompilerTest, CompileNullPlanReturnsEmptyProgram)
 
 TEST_F(CompilerTest, CompileInsertWithColumnNotFoundThrows)
 {
-    auto insert = std::make_shared<neon::planner::InsertNode>();
+    auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "nonexistent";
     insert->values.resize(1);
     insert->values[0].push_back(make_int_literal(1));
@@ -537,7 +537,7 @@ TEST_F(CompilerTest, CompileInsertWithColumnNotFoundThrows)
 
 TEST_F(CompilerTest, CompileDropNonexistentTable)
 {
-    auto dt = std::make_shared<neon::planner::DropTableNode>();
+    auto dt = std::make_shared<popo::planner::DropTableNode>();
     dt->table_name = "nosuchtable";
     dt->if_exists = false;
 
@@ -550,22 +550,22 @@ TEST_F(CompilerTest, CompileDropNonexistentTable)
 
 TEST_F(CompilerTest, CompileSelectWithSortAndLimit)
 {
-    auto scan = std::make_shared<neon::planner::ScanNode>();
+    auto scan = std::make_shared<popo::planner::ScanNode>();
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto sort = std::make_shared<neon::planner::SortNode>();
+    auto sort = std::make_shared<popo::planner::SortNode>();
     sort->child = scan;
-    neon::parser::OrderByItem item;
+    popo::parser::OrderByItem item;
     item.expr = make_col_ref("", "id");
     item.ascending = true;
     sort->order_by.push_back(item);
 
-    auto limit = std::make_shared<neon::planner::LimitNode>();
+    auto limit = std::make_shared<popo::planner::LimitNode>();
     limit->child = sort;
     limit->limit_count = 3;
 
-    auto project = std::make_shared<neon::planner::ProjectNode>();
+    auto project = std::make_shared<popo::planner::ProjectNode>();
     project->child = limit;
     project->expressions.push_back(make_col_ref("", "id"));
     project->output_names = {"id"};
@@ -583,7 +583,7 @@ TEST_F(CompilerTest, CompileSelectWithSortAndLimit)
 
 TEST_F(CompilerTest, CompileInsertEmptyValues)
 {
-    auto insert = std::make_shared<neon::planner::InsertNode>();
+    auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "users";
     // No values
 
@@ -602,7 +602,7 @@ TEST_F(CompilerTest, CompileInsertEmptyValues)
 
 TEST_F(CompilerTest, CompileInsertHasCorrectConstants)
 {
-    auto insert = std::make_shared<neon::planner::InsertNode>();
+    auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "users";
     insert->values.resize(1);
     insert->values[0].push_back(make_int_literal(42));
@@ -618,9 +618,9 @@ TEST_F(CompilerTest, CompileInsertHasCorrectConstants)
             if (std::get<std::string>(c) == "users")
                 found_table = true;
         }
-        if (std::holds_alternative<neon::type::Value>(c))
+        if (std::holds_alternative<popo::type::Value>(c))
         {
-            if (std::get<neon::type::Value>(c).i32() == 42)
+            if (std::get<popo::type::Value>(c).i32() == 42)
                 found_value = true;
         }
     }
@@ -628,4 +628,4 @@ TEST_F(CompilerTest, CompileInsertHasCorrectConstants)
     EXPECT_TRUE(found_value);
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

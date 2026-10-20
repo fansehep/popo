@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "src/storage/page.h"
 
-using namespace neon::storage;
+using namespace popo::storage;
 
 class PageTest : public ::testing::Test
 {

@@ -1,6 +1,6 @@
 #include "src/type/value.h"
 
-namespace neon::type
+namespace popo::type
 {
 
 const char * type_to_string(ValueType type)
@@ -40,4 +40,4 @@ const char * type_to_string(ValueType type)
     }
 }
 
-} // namespace neon::type
+} // namespace popo::type

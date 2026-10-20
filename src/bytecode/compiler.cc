@@ -2,14 +2,14 @@
 #include <format>
 #include <stdexcept>
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
-Compiler::Compiler(neon::catalog::SchemaManager & schema_mgr) : schema_mgr_(schema_mgr)
+Compiler::Compiler(popo::catalog::SchemaManager & schema_mgr) : schema_mgr_(schema_mgr)
 {
 }
 
-neon::base::Result<Program> Compiler::compile(const neon::planner::PlanNodePtr & plan)
+popo::base::Result<Program> Compiler::compile(const popo::planner::PlanNodePtr & plan)
 {
     program_ = Program();
     next_cursor_id_ = 0;
@@ -26,83 +26,83 @@ neon::base::Result<Program> Compiler::compile(const neon::planner::PlanNodePtr &
     }
     catch (const std::exception & e)
     {
-        return std::unexpected(Error{neon::base::Unknown, e.what()});
+        return std::unexpected(Error{popo::base::Unknown, e.what()});
     }
 }
 
-void Compiler::compile_node(const neon::planner::PlanNodePtr & node)
+void Compiler::compile_node(const popo::planner::PlanNodePtr & node)
 {
     if (!node)
         return;
     switch (node->type)
     {
-        case neon::planner::PlanNodeType::Scan:
-            compile_scan(static_cast<const neon::planner::ScanNode &>(*node));
+        case popo::planner::PlanNodeType::Scan:
+            compile_scan(static_cast<const popo::planner::ScanNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Filter:
-            compile_filter(static_cast<const neon::planner::FilterNode &>(*node));
+        case popo::planner::PlanNodeType::Filter:
+            compile_filter(static_cast<const popo::planner::FilterNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Project:
-            compile_project(static_cast<const neon::planner::ProjectNode &>(*node));
+        case popo::planner::PlanNodeType::Project:
+            compile_project(static_cast<const popo::planner::ProjectNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Join:
-            compile_join(static_cast<const neon::planner::JoinNode &>(*node));
+        case popo::planner::PlanNodeType::Join:
+            compile_join(static_cast<const popo::planner::JoinNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Agg:
-            compile_agg(static_cast<const neon::planner::AggNode &>(*node));
+        case popo::planner::PlanNodeType::Agg:
+            compile_agg(static_cast<const popo::planner::AggNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Sort:
-            compile_sort(static_cast<const neon::planner::SortNode &>(*node));
+        case popo::planner::PlanNodeType::Sort:
+            compile_sort(static_cast<const popo::planner::SortNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Limit:
-            compile_limit(static_cast<const neon::planner::LimitNode &>(*node));
+        case popo::planner::PlanNodeType::Limit:
+            compile_limit(static_cast<const popo::planner::LimitNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Insert:
-            compile_insert(static_cast<const neon::planner::InsertNode &>(*node));
+        case popo::planner::PlanNodeType::Insert:
+            compile_insert(static_cast<const popo::planner::InsertNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Update:
-            compile_update(static_cast<const neon::planner::UpdateNode &>(*node));
+        case popo::planner::PlanNodeType::Update:
+            compile_update(static_cast<const popo::planner::UpdateNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Delete:
-            compile_delete(static_cast<const neon::planner::DeleteNode &>(*node));
+        case popo::planner::PlanNodeType::Delete:
+            compile_delete(static_cast<const popo::planner::DeleteNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::CreateTable:
-            compile_create_table(static_cast<const neon::planner::CreateTableNode &>(*node));
+        case popo::planner::PlanNodeType::CreateTable:
+            compile_create_table(static_cast<const popo::planner::CreateTableNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::CreateIndex:
-            compile_create_index(static_cast<const neon::planner::CreateIndexNode &>(*node));
+        case popo::planner::PlanNodeType::CreateIndex:
+            compile_create_index(static_cast<const popo::planner::CreateIndexNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::DropTable:
-            compile_drop_table(static_cast<const neon::planner::DropTableNode &>(*node));
+        case popo::planner::PlanNodeType::DropTable:
+            compile_drop_table(static_cast<const popo::planner::DropTableNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::ShowTables:
-            compile_show_tables(static_cast<const neon::planner::ShowTablesNode &>(*node));
+        case popo::planner::PlanNodeType::ShowTables:
+            compile_show_tables(static_cast<const popo::planner::ShowTablesNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::Describe:
-            compile_describe(static_cast<const neon::planner::DescribeNode &>(*node));
+        case popo::planner::PlanNodeType::Describe:
+            compile_describe(static_cast<const popo::planner::DescribeNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::ShowDatabases:
-            compile_show_databases(static_cast<const neon::planner::ShowDatabasesNode &>(*node));
+        case popo::planner::PlanNodeType::ShowDatabases:
+            compile_show_databases(static_cast<const popo::planner::ShowDatabasesNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::SetVar:
-            compile_set_var(static_cast<const neon::planner::SetVarNode &>(*node));
+        case popo::planner::PlanNodeType::SetVar:
+            compile_set_var(static_cast<const popo::planner::SetVarNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::ShowVariables:
-            compile_show_variables(static_cast<const neon::planner::ShowVariablesNode &>(*node));
+        case popo::planner::PlanNodeType::ShowVariables:
+            compile_show_variables(static_cast<const popo::planner::ShowVariablesNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::ShowStatus:
-            compile_show_status(static_cast<const neon::planner::ShowStatusNode &>(*node));
+        case popo::planner::PlanNodeType::ShowStatus:
+            compile_show_status(static_cast<const popo::planner::ShowStatusNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::SelectDatabase:
-            compile_select_database(static_cast<const neon::planner::SelectDatabaseNode &>(*node));
+        case popo::planner::PlanNodeType::SelectDatabase:
+            compile_select_database(static_cast<const popo::planner::SelectDatabaseNode &>(*node));
             break;
-        case neon::planner::PlanNodeType::SelectSystemVar:
-            compile_select_system_var(static_cast<const neon::planner::SelectSystemVarNode &>(*node));
+        case popo::planner::PlanNodeType::SelectSystemVar:
+            compile_select_system_var(static_cast<const popo::planner::SelectSystemVarNode &>(*node));
             break;
     }
 }
 
-void Compiler::compile_scan(const neon::planner::ScanNode & node)
+void Compiler::compile_scan(const popo::planner::ScanNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
@@ -134,17 +134,17 @@ void Compiler::compile_scan(const neon::planner::ScanNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_filter(const neon::planner::FilterNode & node)
+void Compiler::compile_filter(const popo::planner::FilterNode & node)
 {
     compile_node(node.child);
 }
 
-void Compiler::compile_project(const neon::planner::ProjectNode & node)
+void Compiler::compile_project(const popo::planner::ProjectNode & node)
 {
     compile_select(node);
 }
 
-void Compiler::compile_join(const neon::planner::JoinNode & node)
+void Compiler::compile_join(const popo::planner::JoinNode & node)
 {
     SelectPipeline pipe;
     pipe.join = &node;
@@ -152,22 +152,22 @@ void Compiler::compile_join(const neon::planner::JoinNode & node)
     compile_select_pipeline(pipe);
 }
 
-void Compiler::compile_agg(const neon::planner::AggNode & node)
+void Compiler::compile_agg(const popo::planner::AggNode & node)
 {
     compile_node(node.child);
 }
 
-void Compiler::compile_sort(const neon::planner::SortNode & node)
+void Compiler::compile_sort(const popo::planner::SortNode & node)
 {
     compile_node(node.child);
 }
 
-void Compiler::compile_limit(const neon::planner::LimitNode & node)
+void Compiler::compile_limit(const popo::planner::LimitNode & node)
 {
     compile_node(node.child);
 }
 
-void Compiler::compile_insert(const neon::planner::InsertNode & node)
+void Compiler::compile_insert(const popo::planner::InsertNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
@@ -193,7 +193,7 @@ void Compiler::compile_insert(const neon::planner::InsertNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_update(const neon::planner::UpdateNode & node)
+void Compiler::compile_update(const popo::planner::UpdateNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
@@ -224,7 +224,7 @@ void Compiler::compile_update(const neon::planner::UpdateNode & node)
             {
                 throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
             }
-            program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, col_idx)));
+            program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
             compile_expr(assign.value);
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
@@ -252,7 +252,7 @@ void Compiler::compile_update(const neon::planner::UpdateNode & node)
             {
                 throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
             }
-            program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, col_idx)));
+            program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
             compile_expr(assign.value);
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
@@ -269,7 +269,7 @@ void Compiler::compile_update(const neon::planner::UpdateNode & node)
             {
                 throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
             }
-            program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, col_idx)));
+            program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
             compile_expr(assign.value);
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
@@ -284,7 +284,7 @@ void Compiler::compile_update(const neon::planner::UpdateNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_delete(const neon::planner::DeleteNode & node)
+void Compiler::compile_delete(const popo::planner::DeleteNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
@@ -338,7 +338,7 @@ void Compiler::compile_delete(const neon::planner::DeleteNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_create_table(const neon::planner::CreateTableNode & node)
+void Compiler::compile_create_table(const popo::planner::CreateTableNode & node)
 {
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     int32_t cols_idx = program_.add_column_defs(node.columns);
@@ -346,7 +346,7 @@ void Compiler::compile_create_table(const neon::planner::CreateTableNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_create_index(const neon::planner::CreateIndexNode & node)
+void Compiler::compile_create_index(const popo::planner::CreateIndexNode & node)
 {
     int32_t name_idx = program_.add_string_constant(node.index_name);
     int32_t table_idx = program_.add_string_constant(node.table_name);
@@ -359,33 +359,33 @@ void Compiler::compile_create_index(const neon::planner::CreateIndexNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_drop_table(const neon::planner::DropTableNode & node)
+void Compiler::compile_drop_table(const popo::planner::DropTableNode & node)
 {
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     program_.emit(OpCode::DropTable, table_name_idx, node.if_exists ? 1 : 0);
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_expr(const neon::parser::ExprPtr & expr)
+void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
 {
     if (!expr)
         return;
     switch (expr->type)
     {
-        case neon::parser::ExprType::Literal: {
-            const auto & lit = static_cast<const neon::parser::LiteralExpr &>(*expr);
+        case popo::parser::ExprType::Literal: {
+            const auto & lit = static_cast<const popo::parser::LiteralExpr &>(*expr);
             int32_t idx = program_.add_constant(lit.value);
             program_.emit(OpCode::Const, idx);
             break;
         }
-        case neon::parser::ExprType::ColumnRef: {
-            const auto & col = static_cast<const neon::parser::ColumnRefExpr &>(*expr);
+        case popo::parser::ExprType::ColumnRef: {
+            const auto & col = static_cast<const popo::parser::ColumnRefExpr &>(*expr);
             auto [cursor_id, col_idx] = resolve_column(col.table_name, col.column_name);
             program_.emit(OpCode::Column, cursor_id, col_idx);
             break;
         }
-        case neon::parser::ExprType::Star: {
-            const auto & star = static_cast<const neon::parser::StarExpr &>(*expr);
+        case popo::parser::ExprType::Star: {
+            const auto & star = static_cast<const popo::parser::StarExpr &>(*expr);
             if (!star.table_name.empty())
             {
                 auto it = table_to_cursor_.find(star.table_name);
@@ -403,67 +403,67 @@ void Compiler::compile_expr(const neon::parser::ExprPtr & expr)
             }
             break;
         }
-        case neon::parser::ExprType::BinaryOp: {
-            const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*expr);
+        case popo::parser::ExprType::BinaryOp: {
+            const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*expr);
             compile_expr(bin.left);
             compile_expr(bin.right);
             switch (bin.op)
             {
-                case neon::parser::BinaryOpType::Add:
+                case popo::parser::BinaryOpType::Add:
                     program_.emit(OpCode::Add);
                     break;
-                case neon::parser::BinaryOpType::Sub:
+                case popo::parser::BinaryOpType::Sub:
                     program_.emit(OpCode::Sub);
                     break;
-                case neon::parser::BinaryOpType::Mul:
+                case popo::parser::BinaryOpType::Mul:
                     program_.emit(OpCode::Mul);
                     break;
-                case neon::parser::BinaryOpType::Div:
+                case popo::parser::BinaryOpType::Div:
                     program_.emit(OpCode::Div);
                     break;
-                case neon::parser::BinaryOpType::Eq:
+                case popo::parser::BinaryOpType::Eq:
                     program_.emit(OpCode::Eq);
                     break;
-                case neon::parser::BinaryOpType::Ne:
+                case popo::parser::BinaryOpType::Ne:
                     program_.emit(OpCode::Ne);
                     break;
-                case neon::parser::BinaryOpType::Lt:
+                case popo::parser::BinaryOpType::Lt:
                     program_.emit(OpCode::Lt);
                     break;
-                case neon::parser::BinaryOpType::Le:
+                case popo::parser::BinaryOpType::Le:
                     program_.emit(OpCode::Le);
                     break;
-                case neon::parser::BinaryOpType::Gt:
+                case popo::parser::BinaryOpType::Gt:
                     program_.emit(OpCode::Gt);
                     break;
-                case neon::parser::BinaryOpType::Ge:
+                case popo::parser::BinaryOpType::Ge:
                     program_.emit(OpCode::Ge);
                     break;
-                case neon::parser::BinaryOpType::And:
+                case popo::parser::BinaryOpType::And:
                     program_.emit(OpCode::And);
                     break;
-                case neon::parser::BinaryOpType::Or:
+                case popo::parser::BinaryOpType::Or:
                     program_.emit(OpCode::Or);
                     break;
             }
             break;
         }
-        case neon::parser::ExprType::UnaryOp: {
-            const auto & un = static_cast<const neon::parser::UnaryOpExpr &>(*expr);
+        case popo::parser::ExprType::UnaryOp: {
+            const auto & un = static_cast<const popo::parser::UnaryOpExpr &>(*expr);
             compile_expr(un.operand);
             switch (un.op)
             {
-                case neon::parser::UnaryOpType::Not:
+                case popo::parser::UnaryOpType::Not:
                     program_.emit(OpCode::Not);
                     break;
-                case neon::parser::UnaryOpType::Neg:
+                case popo::parser::UnaryOpType::Neg:
                     program_.emit(OpCode::Neg);
                     break;
             }
             break;
         }
-        case neon::parser::ExprType::FunctionCall: {
-            const auto & func = static_cast<const neon::parser::FunctionCallExpr &>(*expr);
+        case popo::parser::ExprType::FunctionCall: {
+            const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*expr);
             if (in_agg_step_context_)
             {
                 auto it = agg_expr_to_index_.find(expr.get());
@@ -474,7 +474,7 @@ void Compiler::compile_expr(const neon::parser::ExprPtr & expr)
                 }
                 else
                 {
-                    program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, 1)));
+                    program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, 1)));
                 }
                 program_.emit(OpCode::AggStep, agg_idx, static_cast<int32_t>(func.func));
             }
@@ -535,24 +535,24 @@ int32_t Compiler::find_column_index(int32_t cursor_id, const std::string & col_n
     return -1;
 }
 
-std::optional<std::tuple<int32_t, int32_t, neon::type::Value>>
-Compiler::detect_pk_equality(const neon::parser::ExprPtr & where, int32_t cursor_id)
+std::optional<std::tuple<int32_t, int32_t, popo::type::Value>>
+Compiler::detect_pk_equality(const popo::parser::ExprPtr & where, int32_t cursor_id)
 {
     if (!where)
         return std::nullopt;
-    if (where->type != neon::parser::ExprType::BinaryOp)
+    if (where->type != popo::parser::ExprType::BinaryOp)
         return std::nullopt;
 
-    const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*where);
-    if (bin.op != neon::parser::BinaryOpType::Eq)
+    const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*where);
+    if (bin.op != popo::parser::BinaryOpType::Eq)
         return std::nullopt;
     if (!bin.left || !bin.right)
         return std::nullopt;
 
     // Check left side is ColumnRef matching PK column
-    if (bin.left->type != neon::parser::ExprType::ColumnRef)
+    if (bin.left->type != popo::parser::ExprType::ColumnRef)
         return std::nullopt;
-    const auto & col = static_cast<const neon::parser::ColumnRefExpr &>(*bin.left);
+    const auto & col = static_cast<const popo::parser::ColumnRefExpr &>(*bin.left);
 
     auto it = cursor_schemas_.find(cursor_id);
     if (it == cursor_schemas_.end() || !it->second)
@@ -568,9 +568,9 @@ Compiler::detect_pk_equality(const neon::parser::ExprPtr & where, int32_t cursor
         return std::nullopt;
 
     // Check right side is a literal constant
-    if (bin.right->type != neon::parser::ExprType::Literal)
+    if (bin.right->type != popo::parser::ExprType::Literal)
         return std::nullopt;
-    const auto & lit = static_cast<const neon::parser::LiteralExpr &>(*bin.right);
+    const auto & lit = static_cast<const popo::parser::LiteralExpr &>(*bin.right);
 
     return std::make_tuple(cursor_id, pk_idx, lit.value);
 }
@@ -581,25 +581,25 @@ namespace
 struct ColCmp
 {
     std::string column;
-    neon::parser::BinaryOpType op = neon::parser::BinaryOpType::Eq;
-    neon::type::Value literal;
+    popo::parser::BinaryOpType op = popo::parser::BinaryOpType::Eq;
+    popo::type::Value literal;
 };
 
-std::optional<ColCmp> column_cmp(const neon::parser::ExprPtr & expr)
+std::optional<ColCmp> column_cmp(const popo::parser::ExprPtr & expr)
 {
-    if (!expr || expr->type != neon::parser::ExprType::BinaryOp)
+    if (!expr || expr->type != popo::parser::ExprType::BinaryOp)
     {
         return std::nullopt;
     }
-    const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*expr);
-    const neon::parser::Expr * left = bin.left.get();
-    const neon::parser::Expr * right = bin.right.get();
+    const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*expr);
+    const popo::parser::Expr * left = bin.left.get();
+    const popo::parser::Expr * right = bin.right.get();
     if (left == nullptr || right == nullptr)
     {
         return std::nullopt;
     }
-    auto flip = [](neon::parser::BinaryOpType op) {
-        using neon::parser::BinaryOpType;
+    auto flip = [](popo::parser::BinaryOpType op) {
+        using popo::parser::BinaryOpType;
         switch (op)
         {
             case BinaryOpType::Lt:
@@ -615,18 +615,18 @@ std::optional<ColCmp> column_cmp(const neon::parser::ExprPtr & expr)
         }
     };
     ColCmp out;
-    if (left->type == neon::parser::ExprType::ColumnRef && right->type == neon::parser::ExprType::Literal)
+    if (left->type == popo::parser::ExprType::ColumnRef && right->type == popo::parser::ExprType::Literal)
     {
-        out.column = static_cast<const neon::parser::ColumnRefExpr &>(*left).column_name;
+        out.column = static_cast<const popo::parser::ColumnRefExpr &>(*left).column_name;
         out.op = bin.op;
-        out.literal = static_cast<const neon::parser::LiteralExpr &>(*right).value;
+        out.literal = static_cast<const popo::parser::LiteralExpr &>(*right).value;
         return out;
     }
-    if (right->type == neon::parser::ExprType::ColumnRef && left->type == neon::parser::ExprType::Literal)
+    if (right->type == popo::parser::ExprType::ColumnRef && left->type == popo::parser::ExprType::Literal)
     {
-        out.column = static_cast<const neon::parser::ColumnRefExpr &>(*right).column_name;
+        out.column = static_cast<const popo::parser::ColumnRefExpr &>(*right).column_name;
         out.op = flip(bin.op);
-        out.literal = static_cast<const neon::parser::LiteralExpr &>(*left).value;
+        out.literal = static_cast<const popo::parser::LiteralExpr &>(*left).value;
         return out;
     }
     return std::nullopt;
@@ -634,7 +634,7 @@ std::optional<ColCmp> column_cmp(const neon::parser::ExprPtr & expr)
 
 } // namespace
 
-std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const neon::parser::ExprPtr & where, int32_t cursor_id)
+std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const popo::parser::ExprPtr & where, int32_t cursor_id)
 {
     auto schema_it = cursor_schemas_.find(cursor_id);
     if (schema_it == cursor_schemas_.end() || !schema_it->second || schema_it->second->primary_key_col_idx_ < 0)
@@ -644,15 +644,15 @@ std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const neon::parser
     int32_t pk_idx = schema_it->second->primary_key_col_idx_;
     KeyBounds bounds;
     bool any = false;
-    auto absorb = [&](auto && self, const neon::parser::ExprPtr & expr) -> bool {
+    auto absorb = [&](auto && self, const popo::parser::ExprPtr & expr) -> bool {
         if (!expr)
         {
             return false;
         }
-        if (expr->type == neon::parser::ExprType::BinaryOp)
+        if (expr->type == popo::parser::ExprType::BinaryOp)
         {
-            const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*expr);
-            if (bin.op == neon::parser::BinaryOpType::And)
+            const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*expr);
+            if (bin.op == popo::parser::BinaryOpType::And)
             {
                 return self(self, bin.left) && self(self, bin.right);
             }
@@ -662,7 +662,7 @@ std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const neon::parser
         {
             return false;
         }
-        using neon::parser::BinaryOpType;
+        using popo::parser::BinaryOpType;
         switch (cmp->op)
         {
             case BinaryOpType::Gt:
@@ -702,10 +702,10 @@ std::optional<Compiler::KeyBounds> Compiler::detect_pk_bounds(const neon::parser
     return bounds;
 }
 
-std::optional<std::pair<int32_t, neon::type::Value>> Compiler::detect_index_equality(const neon::parser::ExprPtr & where, int32_t cursor_id)
+std::optional<std::pair<int32_t, popo::type::Value>> Compiler::detect_index_equality(const popo::parser::ExprPtr & where, int32_t cursor_id)
 {
     auto cmp = column_cmp(where);
-    if (!cmp || cmp->op != neon::parser::BinaryOpType::Eq)
+    if (!cmp || cmp->op != popo::parser::BinaryOpType::Eq)
     {
         return std::nullopt;
     }
@@ -762,7 +762,7 @@ void Compiler::open_table_cursor(const std::string & table_name, bool for_write)
     }
 }
 
-void Compiler::compile_select(const neon::planner::ProjectNode & project)
+void Compiler::compile_select(const popo::planner::ProjectNode & project)
 {
     SelectPipeline pipe;
     pipe.project = &project;
@@ -770,14 +770,14 @@ void Compiler::compile_select(const neon::planner::ProjectNode & project)
     compile_select_pipeline(pipe);
 }
 
-void Compiler::analyze_select_pipeline(const neon::planner::PlanNodePtr & node, SelectPipeline & pipe)
+void Compiler::analyze_select_pipeline(const popo::planner::PlanNodePtr & node, SelectPipeline & pipe)
 {
     if (!node)
         return;
     switch (node->type)
     {
-        case neon::planner::PlanNodeType::Filter: {
-            const auto * f = static_cast<const neon::planner::FilterNode *>(node.get());
+        case popo::planner::PlanNodeType::Filter: {
+            const auto * f = static_cast<const popo::planner::FilterNode *>(node.get());
             analyze_select_pipeline(f->child, pipe);
             // A filter under the aggregate is WHERE. A filter above it is HAVING.
             if (pipe.agg)
@@ -790,28 +790,28 @@ void Compiler::analyze_select_pipeline(const neon::planner::PlanNodePtr & node, 
             }
             break;
         }
-        case neon::planner::PlanNodeType::Agg: {
-            const auto * agg = static_cast<const neon::planner::AggNode *>(node.get());
+        case popo::planner::PlanNodeType::Agg: {
+            const auto * agg = static_cast<const popo::planner::AggNode *>(node.get());
             analyze_select_pipeline(agg->child, pipe);
             pipe.agg = agg;
             break;
         }
-        case neon::planner::PlanNodeType::Sort: {
-            pipe.sort = static_cast<const neon::planner::SortNode *>(node.get());
+        case popo::planner::PlanNodeType::Sort: {
+            pipe.sort = static_cast<const popo::planner::SortNode *>(node.get());
             analyze_select_pipeline(pipe.sort->child, pipe);
             break;
         }
-        case neon::planner::PlanNodeType::Limit: {
-            pipe.limit = static_cast<const neon::planner::LimitNode *>(node.get());
+        case popo::planner::PlanNodeType::Limit: {
+            pipe.limit = static_cast<const popo::planner::LimitNode *>(node.get());
             analyze_select_pipeline(pipe.limit->child, pipe);
             break;
         }
-        case neon::planner::PlanNodeType::Scan: {
-            pipe.scan = static_cast<const neon::planner::ScanNode *>(node.get());
+        case popo::planner::PlanNodeType::Scan: {
+            pipe.scan = static_cast<const popo::planner::ScanNode *>(node.get());
             break;
         }
-        case neon::planner::PlanNodeType::Join: {
-            pipe.join = static_cast<const neon::planner::JoinNode *>(node.get());
+        case popo::planner::PlanNodeType::Join: {
+            pipe.join = static_cast<const popo::planner::JoinNode *>(node.get());
             break;
         }
         default:
@@ -839,13 +839,13 @@ void Compiler::compile_select_pipeline(const SelectPipeline & pipe)
     }
 }
 
-int32_t Compiler::resolve_project_columns(const std::vector<neon::parser::ExprPtr> & exprs, std::vector<std::string> & out_names)
+int32_t Compiler::resolve_project_columns(const std::vector<popo::parser::ExprPtr> & exprs, std::vector<std::string> & out_names)
 {
     out_names.clear();
     int32_t count = 0;
     for (const auto & expr : exprs)
     {
-        if (expr->type == neon::parser::ExprType::Star)
+        if (expr->type == popo::parser::ExprType::Star)
         {
             // Expand star to all columns from all tables
             for (const auto & [table_name, cursor_id] : table_to_cursor_)
@@ -861,44 +861,44 @@ int32_t Compiler::resolve_project_columns(const std::vector<neon::parser::ExprPt
                 }
             }
         }
-        else if (expr->type == neon::parser::ExprType::ColumnRef)
+        else if (expr->type == popo::parser::ExprType::ColumnRef)
         {
-            const auto & col = static_cast<const neon::parser::ColumnRefExpr &>(*expr);
+            const auto & col = static_cast<const popo::parser::ColumnRefExpr &>(*expr);
             out_names.push_back(col.column_name);
             count++;
         }
-        else if (expr->type == neon::parser::ExprType::FunctionCall)
+        else if (expr->type == popo::parser::ExprType::FunctionCall)
         {
-            const auto & func = static_cast<const neon::parser::FunctionCallExpr &>(*expr);
+            const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*expr);
             // Derive name from function call (e.g., COUNT(*), SUM(val))
             std::string fn_name;
             switch (func.func)
             {
-                case neon::parser::AggFuncType::Count:
+                case popo::parser::AggFuncType::Count:
                     fn_name = "COUNT";
                     break;
-                case neon::parser::AggFuncType::Sum:
+                case popo::parser::AggFuncType::Sum:
                     fn_name = "SUM";
                     break;
-                case neon::parser::AggFuncType::Avg:
+                case popo::parser::AggFuncType::Avg:
                     fn_name = "AVG";
                     break;
-                case neon::parser::AggFuncType::Min:
+                case popo::parser::AggFuncType::Min:
                     fn_name = "MIN";
                     break;
-                case neon::parser::AggFuncType::Max:
+                case popo::parser::AggFuncType::Max:
                     fn_name = "MAX";
                     break;
             }
             if (!func.args.empty())
             {
-                if (func.args[0]->type == neon::parser::ExprType::Star)
+                if (func.args[0]->type == popo::parser::ExprType::Star)
                 {
                     out_names.push_back(fn_name + "(*)");
                 }
-                else if (func.args[0]->type == neon::parser::ExprType::ColumnRef)
+                else if (func.args[0]->type == popo::parser::ExprType::ColumnRef)
                 {
-                    const auto & col_ref = static_cast<const neon::parser::ColumnRefExpr &>(*func.args[0]);
+                    const auto & col_ref = static_cast<const popo::parser::ColumnRefExpr &>(*func.args[0]);
                     out_names.push_back(fn_name + "(" + col_ref.column_name + ")");
                 }
                 else
@@ -1028,7 +1028,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
 
     if (pipe.limit)
     {
-        program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int64, pipe.limit->limit_count)));
+        program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int64, pipe.limit->limit_count)));
     }
 
     int32_t rewind_inst = 0;
@@ -1098,7 +1098,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
     int32_t limit_jump = -1;
     if (pipe.limit)
     {
-        program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, 1)));
+        program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, 1)));
         program_.emit(OpCode::Sub);
         program_.emit(OpCode::Dup);
         limit_jump = program_.emit(OpCode::JumpIfFalse, 0);
@@ -1214,7 +1214,7 @@ void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
 
     if (pipe.limit)
     {
-        program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int64, pipe.limit->limit_count)));
+        program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int64, pipe.limit->limit_count)));
     }
 
     program_.emit(OpCode::SorterSort, sorter);
@@ -1233,7 +1233,7 @@ void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
     int32_t limit_jump = -1;
     if (pipe.limit)
     {
-        program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, 1)));
+        program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, 1)));
         program_.emit(OpCode::Sub);
         program_.emit(OpCode::Dup);
         limit_jump = program_.emit(OpCode::JumpIfFalse, 0);
@@ -1294,13 +1294,13 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     }
 
     bool plain_count_star = pipe.where_filters.empty() && !pipe.having && pipe.agg->agg_exprs.size() == 1
-        && pipe.agg->agg_exprs[0] && pipe.agg->agg_exprs[0]->type == neon::parser::ExprType::FunctionCall;
+        && pipe.agg->agg_exprs[0] && pipe.agg->agg_exprs[0]->type == popo::parser::ExprType::FunctionCall;
     if (plain_count_star)
     {
-        const auto & func = static_cast<const neon::parser::FunctionCallExpr &>(*pipe.agg->agg_exprs[0]);
+        const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*pipe.agg->agg_exprs[0]);
         bool count_star = func.args.empty()
-            || (func.args.size() == 1 && func.args[0] && func.args[0]->type == neon::parser::ExprType::Star);
-        if (func.func == neon::parser::AggFuncType::Count && count_star)
+            || (func.args.size() == 1 && func.args[0] && func.args[0]->type == popo::parser::ExprType::Star);
+        if (func.func == popo::parser::AggFuncType::Count && count_star)
         {
             program_.emit(OpCode::TableCount, cursor);
             program_.emit(OpCode::ResultRow, 1);
@@ -1324,16 +1324,16 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     for (size_t i = 0; i < pipe.agg->agg_exprs.size(); ++i)
     {
         const auto & expr = pipe.agg->agg_exprs[i];
-        if (expr->type == neon::parser::ExprType::FunctionCall)
+        if (expr->type == popo::parser::ExprType::FunctionCall)
         {
-            const auto & func = static_cast<const neon::parser::FunctionCallExpr &>(*expr);
+            const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*expr);
             if (!func.args.empty())
             {
                 compile_expr(func.args[0]);
             }
             else
             {
-                program_.emit(OpCode::Const, program_.add_constant(neon::type::Value(neon::type::ValueType::Int32, 1)));
+                program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, 1)));
             }
             program_.emit(OpCode::AggStep, static_cast<int32_t>(i), static_cast<int32_t>(func.func));
         }
@@ -1377,10 +1377,10 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
         return;
 
     int32_t left_cursor = alloc_cursor();
-    const neon::planner::ScanNode * left_scan = nullptr;
-    if (pipe.join->left && pipe.join->left->type == neon::planner::PlanNodeType::Scan)
+    const popo::planner::ScanNode * left_scan = nullptr;
+    if (pipe.join->left && pipe.join->left->type == popo::planner::PlanNodeType::Scan)
     {
-        left_scan = static_cast<const neon::planner::ScanNode *>(pipe.join->left.get());
+        left_scan = static_cast<const popo::planner::ScanNode *>(pipe.join->left.get());
     }
     if (!left_scan)
     {
@@ -1389,7 +1389,7 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
 
     int32_t left_table_idx = program_.add_string_constant(left_scan->table_name);
     program_.emit(OpCode::OpenRead, left_cursor, left_table_idx);
-    neon::catalog::SchemaRef left_schema;
+    popo::catalog::SchemaRef left_schema;
     auto qr_left = schema_mgr_.query_table(left_scan->table_name);
     if (qr_left && *qr_left)
     {
@@ -1403,10 +1403,10 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     }
 
     int32_t right_cursor = alloc_cursor();
-    const neon::planner::ScanNode * right_scan = nullptr;
-    if (pipe.join->right && pipe.join->right->type == neon::planner::PlanNodeType::Scan)
+    const popo::planner::ScanNode * right_scan = nullptr;
+    if (pipe.join->right && pipe.join->right->type == popo::planner::PlanNodeType::Scan)
     {
-        right_scan = static_cast<const neon::planner::ScanNode *>(pipe.join->right.get());
+        right_scan = static_cast<const popo::planner::ScanNode *>(pipe.join->right.get());
     }
     if (!right_scan)
     {
@@ -1415,7 +1415,7 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
 
     int32_t right_table_idx = program_.add_string_constant(right_scan->table_name);
     program_.emit(OpCode::OpenRead, right_cursor, right_table_idx);
-    neon::catalog::SchemaRef right_schema;
+    popo::catalog::SchemaRef right_schema;
     auto qr_right = schema_mgr_.query_table(right_scan->table_name);
     if (qr_right && *qr_right)
     {
@@ -1443,15 +1443,15 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     }
 
     // Equijoin on a primary key: scan the other side and probe with SeekByPk.
-    if (pipe.join->join_type == neon::parser::JoinType::Inner && pipe.join->condition
-        && pipe.join->condition->type == neon::parser::ExprType::BinaryOp)
+    if (pipe.join->join_type == popo::parser::JoinType::Inner && pipe.join->condition
+        && pipe.join->condition->type == popo::parser::ExprType::BinaryOp)
     {
-        const auto & bin = static_cast<const neon::parser::BinaryOpExpr &>(*pipe.join->condition);
-        if (bin.op == neon::parser::BinaryOpType::Eq && bin.left && bin.right && bin.left->type == neon::parser::ExprType::ColumnRef
-            && bin.right->type == neon::parser::ExprType::ColumnRef)
+        const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*pipe.join->condition);
+        if (bin.op == popo::parser::BinaryOpType::Eq && bin.left && bin.right && bin.left->type == popo::parser::ExprType::ColumnRef
+            && bin.right->type == popo::parser::ExprType::ColumnRef)
         {
-            const auto & key_left = static_cast<const neon::parser::ColumnRefExpr &>(*bin.left);
-            const auto & key_right = static_cast<const neon::parser::ColumnRefExpr &>(*bin.right);
+            const auto & key_left = static_cast<const popo::parser::ColumnRefExpr &>(*bin.left);
+            const auto & key_right = static_cast<const popo::parser::ColumnRefExpr &>(*bin.right);
             auto [c0, i0] = resolve_column(key_left.table_name, key_left.column_name);
             auto [c1, i1] = resolve_column(key_right.table_name, key_right.column_name);
             auto pk_index = [this](int32_t cursor) -> int32_t {
@@ -1591,15 +1591,15 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_show_tables(const neon::planner::ShowTablesNode & /*node*/)
+void Compiler::compile_show_tables(const popo::planner::ShowTablesNode & /*node*/)
 {
-    int32_t col_name_idx = program_.add_string_constant("Tables_in_neon");
+    int32_t col_name_idx = program_.add_string_constant("Tables_in_popo");
     program_.emit(OpCode::ColumnName, 0, col_name_idx);
     program_.emit(OpCode::ShowTables);
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_describe(const neon::planner::DescribeNode & node)
+void Compiler::compile_describe(const popo::planner::DescribeNode & node)
 {
     // Column names for DESCRIBE output
     int32_t field_idx = program_.add_string_constant("Field");
@@ -1619,7 +1619,7 @@ void Compiler::compile_describe(const neon::planner::DescribeNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_show_databases(const neon::planner::ShowDatabasesNode & /*node*/)
+void Compiler::compile_show_databases(const popo::planner::ShowDatabasesNode & /*node*/)
 {
     int32_t col_name_idx = program_.add_string_constant("Database");
     program_.emit(OpCode::ColumnName, 0, col_name_idx);
@@ -1627,13 +1627,13 @@ void Compiler::compile_show_databases(const neon::planner::ShowDatabasesNode & /
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_set_var(const neon::planner::SetVarNode & /*node*/)
+void Compiler::compile_set_var(const popo::planner::SetVarNode & /*node*/)
 {
     program_.emit(OpCode::SetVar);
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_show_variables(const neon::planner::ShowVariablesNode & /*node*/)
+void Compiler::compile_show_variables(const popo::planner::ShowVariablesNode & /*node*/)
 {
     int32_t name_idx = program_.add_string_constant("Variable_name");
     int32_t value_idx = program_.add_string_constant("Value");
@@ -1643,7 +1643,7 @@ void Compiler::compile_show_variables(const neon::planner::ShowVariablesNode & /
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_show_status(const neon::planner::ShowStatusNode & /*node*/)
+void Compiler::compile_show_status(const popo::planner::ShowStatusNode & /*node*/)
 {
     int32_t name_idx = program_.add_string_constant("Variable_name");
     int32_t value_idx = program_.add_string_constant("Value");
@@ -1653,7 +1653,7 @@ void Compiler::compile_show_status(const neon::planner::ShowStatusNode & /*node*
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_select_database(const neon::planner::SelectDatabaseNode & /*node*/)
+void Compiler::compile_select_database(const popo::planner::SelectDatabaseNode & /*node*/)
 {
     int32_t col_name_idx = program_.add_string_constant("DATABASE()");
     program_.emit(OpCode::ColumnName, 0, col_name_idx);
@@ -1661,7 +1661,7 @@ void Compiler::compile_select_database(const neon::planner::SelectDatabaseNode &
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_select_system_var(const neon::planner::SelectSystemVarNode & node)
+void Compiler::compile_select_system_var(const popo::planner::SelectSystemVarNode & node)
 {
     int32_t col_name_idx = program_.add_string_constant("@@" + node.var_name);
     program_.emit(OpCode::ColumnName, 0, col_name_idx);
@@ -1670,4 +1670,4 @@ void Compiler::compile_select_system_var(const neon::planner::SelectSystemVarNod
     program_.emit(OpCode::Halt);
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

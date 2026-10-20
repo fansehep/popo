@@ -13,14 +13,14 @@
 #include "src/planner/planner.h"
 #include "src/storage/storage_engine.h"
 
-namespace neon::test
+namespace popo::test
 {
 
 struct SqlResult
 {
     bool ok = false;
     std::string error;
-    neon::bytecode::ExecuteSuccess result;
+    popo::bytecode::ExecuteSuccess result;
     int64_t parse_us = 0;
     int64_t plan_us = 0;
     int64_t compile_us = 0;
@@ -54,7 +54,7 @@ private:
     explicit SqlTxn(SqlRunner * runner);
 
     SqlRunner * runner_ = nullptr;
-    neon::txn::Transaction * txn_ = nullptr;
+    popo::txn::Transaction * txn_ = nullptr;
 };
 
 // Same pipeline as Session::handle_query: one SQL string, one statement at a time.
@@ -77,20 +77,20 @@ public:
 private:
     friend class SqlTxn;
 
-    SqlResult run(const std::string & sql, neon::txn::Transaction * outer)
+    SqlResult run(const std::string & sql, popo::txn::Transaction * outer)
     {
         using clock = std::chrono::steady_clock;
         SqlResult out;
         try
         {
-            if (auto fast = neon::bytecode::try_point_select(schema_, engine_, sql))
+            if (auto fast = popo::bytecode::try_point_select(schema_, engine_, sql))
             {
                 out.result = std::move(*fast);
                 out.ok = true;
                 return out;
             }
             auto t0 = clock::now();
-            neon::parser::Parser parser;
+            popo::parser::Parser parser;
             auto parsed = parser.parse(sql);
             auto t1 = clock::now();
             out.parse_us = us(t1 - t0);
@@ -147,11 +147,11 @@ private:
         return std::chrono::duration_cast<std::chrono::microseconds>(d).count();
     }
 
-    neon::catalog::SchemaManager schema_;
-    neon::storage::StorageEngine engine_;
-    neon::planner::Planner planner_;
-    neon::bytecode::Compiler compiler_;
-    neon::bytecode::VirtualMachine vm_;
+    popo::catalog::SchemaManager schema_;
+    popo::storage::StorageEngine engine_;
+    popo::planner::Planner planner_;
+    popo::bytecode::Compiler compiler_;
+    popo::bytecode::VirtualMachine vm_;
 };
 
 inline SqlTxn::SqlTxn(SqlRunner * runner)
@@ -196,4 +196,4 @@ inline void SqlTxn::commit()
     txn_ = nullptr;
 }
 
-} // namespace neon::test
+} // namespace popo::test

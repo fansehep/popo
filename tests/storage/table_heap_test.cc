@@ -15,9 +15,9 @@
 #include "src/type/tuple.h"
 #include "src/type/value.h"
 
-using namespace neon::storage;
-using namespace neon::type;
-using namespace neon::catalog;
+using namespace popo::storage;
+using namespace popo::type;
+using namespace popo::catalog;
 namespace fs = std::filesystem;
 
 namespace
@@ -84,7 +84,7 @@ protected:
     void SetUp() override
     {
         std::random_device rd;
-        test_dir = fs::temp_directory_path().string() + "/neon_th_test_" + std::to_string(rd());
+        test_dir = fs::temp_directory_path().string() + "/popo_th_test_" + std::to_string(rd());
         fs::create_directories(test_dir);
 
         dm = std::make_unique<DiskManager>(test_dir);
@@ -108,7 +108,7 @@ protected:
 
 TEST_F(TableHeapTest, InsertAndScan)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
     heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
@@ -132,7 +132,7 @@ TEST_F(TableHeapTest, InsertAndScan)
 
 TEST_F(TableHeapTest, DeleteRow)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     auto rid1 = heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
     auto rid2 = heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
@@ -156,7 +156,7 @@ TEST_F(TableHeapTest, DeleteRow)
 
 TEST_F(TableHeapTest, UpdateRow)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     auto rid1 = heap->insert_row(&txn, make_row(schema, 1, "Alice", 25));
     heap->insert_row(&txn, make_row(schema, 2, "Bob", 30));
@@ -185,7 +185,7 @@ TEST_F(TableHeapTest, UpdateRow)
 
 TEST_F(TableHeapTest, GetRow)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     auto rid = heap->insert_row(&txn, make_row(schema, 42, "TestUser", 99));
     ASSERT_TRUE(rid.is_valid());
 
@@ -199,7 +199,7 @@ TEST_F(TableHeapTest, GetRow)
 
 TEST_F(TableHeapTest, MultiPageInsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     // Insert enough rows with large strings to span multiple leaf pages
     constexpr int NUM_ROWS = 200;
@@ -259,7 +259,7 @@ TEST_F(TableHeapTest, MultiPageInsert)
 
 TEST_F(TableHeapTest, RandomOrderInsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     constexpr int NUM_ROWS = 300;
     // Generate IDs in random order
@@ -296,7 +296,7 @@ TEST_F(TableHeapTest, RandomOrderInsert)
 
 TEST_F(TableHeapTest, LargeScaleInsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     constexpr int NUM_ROWS = 1000;
     for (int i = 0; i < NUM_ROWS; ++i)
@@ -344,7 +344,7 @@ TEST_F(TableHeapTest, LargeScaleInsert)
 
 TEST_F(TableHeapTest, DeleteAndReinsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     // Insert 50 rows
     constexpr int NUM_ROWS = 50;
@@ -362,7 +362,7 @@ TEST_F(TableHeapTest, DeleteAndReinsert)
     }
 
     // Reinsert deleted rows with different age
-    neon::txn::Transaction txn2(2);
+    popo::txn::Transaction txn2(2);
     for (int i = 0; i < NUM_ROWS; i += 2)
     {
         auto rid = heap->insert_row(&txn2, make_row(schema, i, "reinserted", i * 100));
@@ -397,7 +397,7 @@ TEST_F(TableHeapTest, DeleteAndReinsert)
 
 TEST_F(TableHeapTest, UpdateWithPKChange)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     // Insert rows with PK 1..10
     for (int i = 1; i <= 10; ++i)
@@ -451,7 +451,7 @@ TEST_F(TableHeapTest, UpdateWithPKChange)
 TEST_F(TableHeapTest, MixedOperations)
 {
     // Insert, then randomly delete/update/scan
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     constexpr int NUM_ROWS = 200;
     for (int i = 0; i < NUM_ROWS; ++i)
@@ -466,7 +466,7 @@ TEST_F(TableHeapTest, MixedOperations)
 
     for (int iter = 0; iter < 50; ++iter)
     {
-        neon::txn::Transaction op_txn(iter + 100);
+        popo::txn::Transaction op_txn(iter + 100);
         int target = id_dist(g);
 
         switch (op_dist(g))
@@ -541,7 +541,7 @@ TEST_F(TableHeapTest, MixedOperations)
 
 TEST_F(TableHeapTest, WideRowsStayReachableByPk)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     constexpr int kRows = 800;
     std::string payload(900, 'x');
     std::vector<int> ids(kRows);

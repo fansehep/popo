@@ -3,7 +3,7 @@
 #include "src/catalog/column.h"
 #include "src/catalog/schema_mgr.h"
 
-namespace neon::catalog
+namespace popo::catalog
 {
 
 class SchemaManagerTest : public ::testing::Test
@@ -32,7 +32,7 @@ TEST_F(SchemaManagerTest, CreateTableTest)
     id_col.column_name_ = "id";
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.type_len_ = 4;
     id_col.is_unique_ = true;
     columns.push_back(id_col);
@@ -42,7 +42,7 @@ TEST_F(SchemaManagerTest, CreateTableTest)
     name_col.column_name_ = "name";
     name_col.is_primary_key_ = false;
     name_col.is_nullable_ = true;
-    name_col.data_type_ = neon::type::ValueType::String;
+    name_col.data_type_ = popo::type::ValueType::String;
     name_col.type_len_ = 255;
     name_col.is_unique_ = false;
     columns.push_back(name_col);
@@ -61,7 +61,7 @@ TEST_F(SchemaManagerTest, QueryTableTest)
     id_col.column_name_ = "id";
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.type_len_ = 4;
     id_col.is_unique_ = true;
     columns.push_back(id_col);
@@ -85,7 +85,7 @@ TEST_F(SchemaManagerTest, IndexOperationsTest)
     id_col.column_name_ = "id";
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.type_len_ = 4;
     id_col.is_unique_ = true;
     columns.push_back(id_col);
@@ -94,7 +94,7 @@ TEST_F(SchemaManagerTest, IndexOperationsTest)
     name_col.column_name_ = "name";
     name_col.is_primary_key_ = false;
     name_col.is_nullable_ = true;
-    name_col.data_type_ = neon::type::ValueType::String;
+    name_col.data_type_ = popo::type::ValueType::String;
     name_col.type_len_ = 255;
     name_col.is_unique_ = false;
     columns.push_back(name_col);
@@ -125,7 +125,7 @@ TEST_F(SchemaManagerTest, DeleteTableTest)
     id_col.column_name_ = "id";
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.type_len_ = 4;
     id_col.is_unique_ = true;
     columns.push_back(id_col);
@@ -138,4 +138,4 @@ TEST_F(SchemaManagerTest, DeleteTableTest)
     EXPECT_TRUE(delete_result.has_value());
 }
 
-} // namespace neon::catalog
+} // namespace popo::catalog

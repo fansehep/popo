@@ -8,14 +8,14 @@
 #include "parser/ast.h"
 #include "parser/lexer.h"
 
-namespace neon::parser
+namespace popo::parser
 {
 
 class Parser
 {
 public:
     // Parse a SQL string, returns a list of statements
-    neon::base::Result<std::vector<StmtPtr>> parse(const std::string & sql);
+    popo::base::Result<std::vector<StmtPtr>> parse(const std::string & sql);
 
 private:
     std::vector<Token> tokens_;
@@ -69,7 +69,7 @@ private:
 
     // Type parsing for CREATE TABLE
     ColumnDef parse_column_def();
-    neon::type::ValueType parse_data_type(int32_t & type_len);
+    popo::type::ValueType parse_data_type(int32_t & type_len);
 };
 
-} // namespace neon::parser
+} // namespace popo::parser

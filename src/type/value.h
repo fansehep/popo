@@ -6,7 +6,7 @@
 #include <string>
 #include "src/base/macro.h"
 
-namespace neon::type
+namespace popo::type
 {
 
 enum class ValueType : uint8_t
@@ -422,13 +422,13 @@ private:
     Val value_{};
 };
 
-} // namespace neon::type
+} // namespace popo::type
 
 template <>
-struct std::formatter<neon::type::Value> : std::formatter<std::string>
+struct std::formatter<popo::type::Value> : std::formatter<std::string>
 {
     template <typename FormatContext>
-    auto format(const neon::type::Value & val, FormatContext & ctx) const
+    auto format(const popo::type::Value & val, FormatContext & ctx) const
     {
         return std::formatter<std::string>::format(val.to_val_string(), ctx);
     }

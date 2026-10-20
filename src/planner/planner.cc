@@ -2,38 +2,38 @@
 #include <format>
 #include <stdexcept>
 
-namespace neon::planner
+namespace popo::planner
 {
 
-using neon::base::Error;
+using popo::base::Error;
 
 namespace
 {
 
 // Check if a single expression contains an aggregate function call
-bool HasAggregate(const neon::parser::ExprPtr & expr)
+bool HasAggregate(const popo::parser::ExprPtr & expr)
 {
     if (!expr)
         return false;
-    if (expr->type == neon::parser::ExprType::FunctionCall)
+    if (expr->type == popo::parser::ExprType::FunctionCall)
     {
         return true;
     }
-    if (expr->type == neon::parser::ExprType::BinaryOp)
+    if (expr->type == popo::parser::ExprType::BinaryOp)
     {
-        const auto & bin = dynamic_cast<const neon::parser::BinaryOpExpr &>(*expr);
+        const auto & bin = dynamic_cast<const popo::parser::BinaryOpExpr &>(*expr);
         return HasAggregate(bin.left) || HasAggregate(bin.right);
     }
-    if (expr->type == neon::parser::ExprType::UnaryOp)
+    if (expr->type == popo::parser::ExprType::UnaryOp)
     {
-        const auto & un = dynamic_cast<const neon::parser::UnaryOpExpr &>(*expr);
+        const auto & un = dynamic_cast<const popo::parser::UnaryOpExpr &>(*expr);
         return HasAggregate(un.operand);
     }
     return false;
 }
 
 // Check if any expression in a list contains an aggregate
-bool HasAggregates(const std::vector<neon::parser::ExprPtr> & exprs)
+bool HasAggregates(const std::vector<popo::parser::ExprPtr> & exprs)
 {
     for (const auto & e : exprs)
     {
@@ -44,32 +44,32 @@ bool HasAggregates(const std::vector<neon::parser::ExprPtr> & exprs)
 }
 
 // Collect all aggregate function calls from an expression tree
-void CollectAggregates(const neon::parser::ExprPtr & expr, std::vector<neon::parser::ExprPtr> & out)
+void CollectAggregates(const popo::parser::ExprPtr & expr, std::vector<popo::parser::ExprPtr> & out)
 {
     if (!expr)
         return;
-    if (expr->type == neon::parser::ExprType::FunctionCall)
+    if (expr->type == popo::parser::ExprType::FunctionCall)
     {
         out.push_back(expr);
         return;
     }
-    if (expr->type == neon::parser::ExprType::BinaryOp)
+    if (expr->type == popo::parser::ExprType::BinaryOp)
     {
-        const auto & bin = dynamic_cast<const neon::parser::BinaryOpExpr &>(*expr);
+        const auto & bin = dynamic_cast<const popo::parser::BinaryOpExpr &>(*expr);
         CollectAggregates(bin.left, out);
         CollectAggregates(bin.right, out);
     }
-    if (expr->type == neon::parser::ExprType::UnaryOp)
+    if (expr->type == popo::parser::ExprType::UnaryOp)
     {
-        const auto & un = dynamic_cast<const neon::parser::UnaryOpExpr &>(*expr);
+        const auto & un = dynamic_cast<const popo::parser::UnaryOpExpr &>(*expr);
         CollectAggregates(un.operand, out);
     }
 }
 
 // Extract all aggregate expressions from a select list
-std::vector<neon::parser::ExprPtr> ExtractAggregates(const std::vector<neon::parser::ExprPtr> & select_list)
+std::vector<popo::parser::ExprPtr> ExtractAggregates(const std::vector<popo::parser::ExprPtr> & select_list)
 {
-    std::vector<neon::parser::ExprPtr> result;
+    std::vector<popo::parser::ExprPtr> result;
     for (const auto & e : select_list)
     {
         CollectAggregates(e, result);
@@ -78,69 +78,69 @@ std::vector<neon::parser::ExprPtr> ExtractAggregates(const std::vector<neon::par
 }
 
 // Derive a display name from an expression
-std::string GetExprName(const neon::parser::ExprPtr & expr)
+std::string GetExprName(const popo::parser::ExprPtr & expr)
 {
     if (!expr)
         return "";
-    if (expr->type == neon::parser::ExprType::ColumnRef)
+    if (expr->type == popo::parser::ExprType::ColumnRef)
     {
-        return dynamic_cast<const neon::parser::ColumnRefExpr &>(*expr).column_name;
+        return dynamic_cast<const popo::parser::ColumnRefExpr &>(*expr).column_name;
     }
     return "";
 }
 
 } // anonymous namespace
 
-Planner::Planner(neon::catalog::SchemaManager & schema_mgr) : schema_mgr_(schema_mgr)
+Planner::Planner(popo::catalog::SchemaManager & schema_mgr) : schema_mgr_(schema_mgr)
 {
 }
 
-neon::base::Result<PlanNodePtr> Planner::plan(const neon::parser::StmtPtr & stmt)
+popo::base::Result<PlanNodePtr> Planner::plan(const popo::parser::StmtPtr & stmt)
 {
     try
     {
         switch (stmt->type)
         {
-            case neon::parser::StmtType::Select:
-                return plan_select(dynamic_cast<const neon::parser::SelectStatement &>(*stmt));
-            case neon::parser::StmtType::Insert:
-                return plan_insert(dynamic_cast<const neon::parser::InsertStatement &>(*stmt));
-            case neon::parser::StmtType::CreateTable:
-                return plan_create_table(dynamic_cast<const neon::parser::CreateTableStatement &>(*stmt));
-            case neon::parser::StmtType::CreateIndex:
-                return plan_create_index(dynamic_cast<const neon::parser::CreateIndexStatement &>(*stmt));
-            case neon::parser::StmtType::Update:
-                return plan_update(dynamic_cast<const neon::parser::UpdateStatement &>(*stmt));
-            case neon::parser::StmtType::Delete:
-                return plan_delete(dynamic_cast<const neon::parser::DeleteStatement &>(*stmt));
-            case neon::parser::StmtType::DropTable:
-                return plan_drop_table(dynamic_cast<const neon::parser::DropTableStatement &>(*stmt));
-            case neon::parser::StmtType::ShowTables:
-                return plan_show_tables(dynamic_cast<const neon::parser::ShowTablesStatement &>(*stmt));
-            case neon::parser::StmtType::Describe:
-                return plan_describe(dynamic_cast<const neon::parser::DescribeStatement &>(*stmt));
-            case neon::parser::StmtType::ShowDatabases:
-                return plan_show_databases(dynamic_cast<const neon::parser::ShowDatabasesStatement &>(*stmt));
-            case neon::parser::StmtType::SetVar:
-                return plan_set_var(dynamic_cast<const neon::parser::SetVarStatement &>(*stmt));
-            case neon::parser::StmtType::ShowVariables:
-                return plan_show_variables(dynamic_cast<const neon::parser::ShowVariablesStatement &>(*stmt));
-            case neon::parser::StmtType::ShowStatus:
-                return plan_show_status(dynamic_cast<const neon::parser::ShowStatusStatement &>(*stmt));
-            case neon::parser::StmtType::SelectDatabase:
-                return plan_select_database(dynamic_cast<const neon::parser::SelectDatabaseStatement &>(*stmt));
-            case neon::parser::StmtType::SelectSystemVar:
-                return plan_select_system_var(dynamic_cast<const neon::parser::SelectSystemVarStatement &>(*stmt));
+            case popo::parser::StmtType::Select:
+                return plan_select(dynamic_cast<const popo::parser::SelectStatement &>(*stmt));
+            case popo::parser::StmtType::Insert:
+                return plan_insert(dynamic_cast<const popo::parser::InsertStatement &>(*stmt));
+            case popo::parser::StmtType::CreateTable:
+                return plan_create_table(dynamic_cast<const popo::parser::CreateTableStatement &>(*stmt));
+            case popo::parser::StmtType::CreateIndex:
+                return plan_create_index(dynamic_cast<const popo::parser::CreateIndexStatement &>(*stmt));
+            case popo::parser::StmtType::Update:
+                return plan_update(dynamic_cast<const popo::parser::UpdateStatement &>(*stmt));
+            case popo::parser::StmtType::Delete:
+                return plan_delete(dynamic_cast<const popo::parser::DeleteStatement &>(*stmt));
+            case popo::parser::StmtType::DropTable:
+                return plan_drop_table(dynamic_cast<const popo::parser::DropTableStatement &>(*stmt));
+            case popo::parser::StmtType::ShowTables:
+                return plan_show_tables(dynamic_cast<const popo::parser::ShowTablesStatement &>(*stmt));
+            case popo::parser::StmtType::Describe:
+                return plan_describe(dynamic_cast<const popo::parser::DescribeStatement &>(*stmt));
+            case popo::parser::StmtType::ShowDatabases:
+                return plan_show_databases(dynamic_cast<const popo::parser::ShowDatabasesStatement &>(*stmt));
+            case popo::parser::StmtType::SetVar:
+                return plan_set_var(dynamic_cast<const popo::parser::SetVarStatement &>(*stmt));
+            case popo::parser::StmtType::ShowVariables:
+                return plan_show_variables(dynamic_cast<const popo::parser::ShowVariablesStatement &>(*stmt));
+            case popo::parser::StmtType::ShowStatus:
+                return plan_show_status(dynamic_cast<const popo::parser::ShowStatusStatement &>(*stmt));
+            case popo::parser::StmtType::SelectDatabase:
+                return plan_select_database(dynamic_cast<const popo::parser::SelectDatabaseStatement &>(*stmt));
+            case popo::parser::StmtType::SelectSystemVar:
+                return plan_select_system_var(dynamic_cast<const popo::parser::SelectSystemVarStatement &>(*stmt));
         }
     }
     catch (const std::exception & e)
     {
-        return std::unexpected(Error{neon::base::Unknown, e.what()});
+        return std::unexpected(Error{popo::base::Unknown, e.what()});
     }
-    return std::unexpected(Error{neon::base::Unknown, "Unknown statement type"});
+    return std::unexpected(Error{popo::base::Unknown, "Unknown statement type"});
 }
 
-PlanNodePtr Planner::plan_select(const neon::parser::SelectStatement & stmt)
+PlanNodePtr Planner::plan_select(const popo::parser::SelectStatement & stmt)
 {
     // FROM (Scan/Join)
     PlanNodePtr plan = nullptr;
@@ -213,14 +213,14 @@ PlanNodePtr Planner::plan_select(const neon::parser::SelectStatement & stmt)
     return plan;
 }
 
-PlanNodePtr Planner::plan_table_ref(const neon::parser::TableRefPtr & ref)
+PlanNodePtr Planner::plan_table_ref(const popo::parser::TableRefPtr & ref)
 {
     if (!ref)
         return nullptr;
 
-    if (ref->type == neon::parser::TableRefType::Simple)
+    if (ref->type == popo::parser::TableRefType::Simple)
     {
-        const auto & simple = dynamic_cast<const neon::parser::SimpleTableRef &>(*ref);
+        const auto & simple = dynamic_cast<const popo::parser::SimpleTableRef &>(*ref);
         auto scan = std::make_shared<ScanNode>();
         scan->table_name = simple.table_name;
         scan->alias = simple.alias;
@@ -228,9 +228,9 @@ PlanNodePtr Planner::plan_table_ref(const neon::parser::TableRefPtr & ref)
         return scan;
     }
 
-    if (ref->type == neon::parser::TableRefType::Join)
+    if (ref->type == popo::parser::TableRefType::Join)
     {
-        const auto & join = static_cast<const neon::parser::JoinTableRef &>(*ref);
+        const auto & join = static_cast<const popo::parser::JoinTableRef &>(*ref);
         auto node = std::make_shared<JoinNode>();
         node->join_type = join.join_type;
         node->left = plan_table_ref(join.left);
@@ -257,7 +257,7 @@ void Planner::resolve_scan_columns(ScanNode & scan)
     }
 }
 
-PlanNodePtr Planner::plan_insert(const neon::parser::InsertStatement & stmt)
+PlanNodePtr Planner::plan_insert(const popo::parser::InsertStatement & stmt)
 {
     auto qr = schema_mgr_.query_table(stmt.table_name);
     if (!qr || !*qr)
@@ -271,7 +271,7 @@ PlanNodePtr Planner::plan_insert(const neon::parser::InsertStatement & stmt)
     return node;
 }
 
-PlanNodePtr Planner::plan_create_table(const neon::parser::CreateTableStatement & stmt)
+PlanNodePtr Planner::plan_create_table(const popo::parser::CreateTableStatement & stmt)
 {
     auto node = std::make_shared<CreateTableNode>();
     node->table_name = stmt.table_name;
@@ -279,7 +279,7 @@ PlanNodePtr Planner::plan_create_table(const neon::parser::CreateTableStatement 
     return node;
 }
 
-PlanNodePtr Planner::plan_create_index(const neon::parser::CreateIndexStatement & stmt)
+PlanNodePtr Planner::plan_create_index(const popo::parser::CreateIndexStatement & stmt)
 {
     if (stmt.columns.size() != 1)
     {
@@ -293,7 +293,7 @@ PlanNodePtr Planner::plan_create_index(const neon::parser::CreateIndexStatement 
     return node;
 }
 
-PlanNodePtr Planner::plan_update(const neon::parser::UpdateStatement & stmt)
+PlanNodePtr Planner::plan_update(const popo::parser::UpdateStatement & stmt)
 {
     auto qr = schema_mgr_.query_table(stmt.table_name);
     if (!qr || !*qr)
@@ -307,7 +307,7 @@ PlanNodePtr Planner::plan_update(const neon::parser::UpdateStatement & stmt)
     return node;
 }
 
-PlanNodePtr Planner::plan_delete(const neon::parser::DeleteStatement & stmt)
+PlanNodePtr Planner::plan_delete(const popo::parser::DeleteStatement & stmt)
 {
     auto qr = schema_mgr_.query_table(stmt.table_name);
     if (!qr || !*qr)
@@ -320,7 +320,7 @@ PlanNodePtr Planner::plan_delete(const neon::parser::DeleteStatement & stmt)
     return node;
 }
 
-PlanNodePtr Planner::plan_drop_table(const neon::parser::DropTableStatement & stmt)
+PlanNodePtr Planner::plan_drop_table(const popo::parser::DropTableStatement & stmt)
 {
     auto node = std::make_shared<DropTableNode>();
     node->table_name = stmt.table_name;
@@ -328,12 +328,12 @@ PlanNodePtr Planner::plan_drop_table(const neon::parser::DropTableStatement & st
     return node;
 }
 
-PlanNodePtr Planner::plan_show_tables(const neon::parser::ShowTablesStatement & /*stmt*/)
+PlanNodePtr Planner::plan_show_tables(const popo::parser::ShowTablesStatement & /*stmt*/)
 {
     return std::make_shared<ShowTablesNode>();
 }
 
-PlanNodePtr Planner::plan_describe(const neon::parser::DescribeStatement & stmt)
+PlanNodePtr Planner::plan_describe(const popo::parser::DescribeStatement & stmt)
 {
     auto qr = schema_mgr_.query_table(stmt.table_name);
     if (!qr || !*qr)
@@ -345,36 +345,36 @@ PlanNodePtr Planner::plan_describe(const neon::parser::DescribeStatement & stmt)
     return node;
 }
 
-PlanNodePtr Planner::plan_show_databases(const neon::parser::ShowDatabasesStatement & /*stmt*/)
+PlanNodePtr Planner::plan_show_databases(const popo::parser::ShowDatabasesStatement & /*stmt*/)
 {
     return std::make_shared<ShowDatabasesNode>();
 }
 
-PlanNodePtr Planner::plan_set_var(const neon::parser::SetVarStatement & /*stmt*/)
+PlanNodePtr Planner::plan_set_var(const popo::parser::SetVarStatement & /*stmt*/)
 {
     return std::make_shared<SetVarNode>();
 }
 
-PlanNodePtr Planner::plan_show_variables(const neon::parser::ShowVariablesStatement & /*stmt*/)
+PlanNodePtr Planner::plan_show_variables(const popo::parser::ShowVariablesStatement & /*stmt*/)
 {
     return std::make_shared<ShowVariablesNode>();
 }
 
-PlanNodePtr Planner::plan_show_status(const neon::parser::ShowStatusStatement & /*stmt*/)
+PlanNodePtr Planner::plan_show_status(const popo::parser::ShowStatusStatement & /*stmt*/)
 {
     return std::make_shared<ShowStatusNode>();
 }
 
-PlanNodePtr Planner::plan_select_database(const neon::parser::SelectDatabaseStatement & /*stmt*/)
+PlanNodePtr Planner::plan_select_database(const popo::parser::SelectDatabaseStatement & /*stmt*/)
 {
     return std::make_shared<SelectDatabaseNode>();
 }
 
-PlanNodePtr Planner::plan_select_system_var(const neon::parser::SelectSystemVarStatement & stmt)
+PlanNodePtr Planner::plan_select_system_var(const popo::parser::SelectSystemVarStatement & stmt)
 {
     auto node = std::make_shared<SelectSystemVarNode>();
     node->var_name = stmt.var_name;
     return node;
 }
 
-} // namespace neon::planner
+} // namespace popo::planner

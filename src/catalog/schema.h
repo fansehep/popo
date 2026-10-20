@@ -6,7 +6,7 @@
 #include "src/catalog/column.h"
 
 
-namespace neon::catalog
+namespace popo::catalog
 {
 
 struct SchemaIndex

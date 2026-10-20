@@ -5,11 +5,11 @@
 #include "bytecode/fast_path.h"
 #include "server/protocol.h"
 
-namespace neon::server
+namespace popo::server
 {
 
 Session::Session(
-    asio::ip::tcp::socket socket, neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine, uint32_t connection_id)
+    asio::ip::tcp::socket socket, popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine, uint32_t connection_id)
     : socket_(std::move(socket)), schema_mgr_(schema_mgr), engine_(engine), connection_id_(connection_id)
 {
 }
@@ -100,7 +100,7 @@ void Session::handle_query(const std::string & sql)
     using clock = std::chrono::high_resolution_clock;
     auto t0 = clock::now();
 
-    if (auto fast = neon::bytecode::try_point_select(schema_mgr_, engine_, sql))
+    if (auto fast = popo::bytecode::try_point_select(schema_mgr_, engine_, sql))
     {
         if (!fast->columns.empty())
         {
@@ -113,7 +113,7 @@ void Session::handle_query(const std::string & sql)
         return;
     }
 
-    neon::parser::Parser parser;
+    popo::parser::Parser parser;
     auto parse_result = parser.parse(sql);
     auto t1 = clock::now();
     if (!parse_result)
@@ -123,9 +123,9 @@ void Session::handle_query(const std::string & sql)
     }
     auto & stmts = *parse_result;
 
-    neon::planner::Planner planner(schema_mgr_);
-    neon::bytecode::Compiler compiler(schema_mgr_);
-    neon::bytecode::VirtualMachine vm(schema_mgr_, engine_);
+    popo::planner::Planner planner(schema_mgr_);
+    popo::bytecode::Compiler compiler(schema_mgr_);
+    popo::bytecode::VirtualMachine vm(schema_mgr_, engine_);
 
     for (const auto & stmt : stmts)
     {
@@ -218,7 +218,7 @@ void Session::send_error(uint16_t code, const std::string & msg)
     send_packet(packet);
 }
 
-void Session::send_result_set(const neon::bytecode::ExecuteSuccess & result)
+void Session::send_result_set(const popo::bytecode::ExecuteSuccess & result)
 {
     uint8_t seq = seq_id_++;
     send_packet(Protocol::build_column_count_packet(seq++, result.columns.size()));
@@ -231,7 +231,7 @@ void Session::send_result_set(const neon::bytecode::ExecuteSuccess & result)
             col_type = value_type_to_mysql(result.rows[0]->value_ref(static_cast<uint32_t>(i)).datatype());
             col_length = column_length_for_type(result.rows[0]->value_ref(static_cast<uint32_t>(i)).datatype());
         }
-        send_packet(Protocol::build_column_def_packet(seq++, "neon", "", result.columns[i], col_type, col_length));
+        send_packet(Protocol::build_column_def_packet(seq++, "popo", "", result.columns[i], col_type, col_length));
     }
     send_packet(Protocol::build_eof_packet(seq++));
     for (const auto & row : result.rows)
@@ -240,7 +240,7 @@ void Session::send_result_set(const neon::bytecode::ExecuteSuccess & result)
         for (uint32_t i = 0; i < row->len(); ++i)
         {
             const auto & val = row->value_ref(i);
-            if (val.datatype() == neon::type::ValueType::Null)
+            if (val.datatype() == popo::type::ValueType::Null)
             {
                 payload.push_back(0xFB);
             }
@@ -261,79 +261,79 @@ std::vector<uint8_t> Session::read_bytes(size_t n)
     return buf;
 }
 
-MySQLColumnType Session::value_type_to_mysql(neon::type::ValueType vt)
+MySQLColumnType Session::value_type_to_mysql(popo::type::ValueType vt)
 {
     switch (vt)
     {
-        case neon::type::ValueType::Int8:
-        case neon::type::ValueType::Uint8:
+        case popo::type::ValueType::Int8:
+        case popo::type::ValueType::Uint8:
             return MySQLColumnType::MYSQL_TYPE_TINY;
-        case neon::type::ValueType::Int16:
-        case neon::type::ValueType::Uint16:
+        case popo::type::ValueType::Int16:
+        case popo::type::ValueType::Uint16:
             return MySQLColumnType::MYSQL_TYPE_SHORT;
-        case neon::type::ValueType::Int32:
-        case neon::type::ValueType::Uint32:
+        case popo::type::ValueType::Int32:
+        case popo::type::ValueType::Uint32:
             return MySQLColumnType::MYSQL_TYPE_LONG;
-        case neon::type::ValueType::Int64:
-        case neon::type::ValueType::Uint64:
+        case popo::type::ValueType::Int64:
+        case popo::type::ValueType::Uint64:
             return MySQLColumnType::MYSQL_TYPE_LONGLONG;
-        case neon::type::ValueType::Float32:
+        case popo::type::ValueType::Float32:
             return MySQLColumnType::MYSQL_TYPE_FLOAT;
-        case neon::type::ValueType::Float64:
+        case popo::type::ValueType::Float64:
             return MySQLColumnType::MYSQL_TYPE_DOUBLE;
-        case neon::type::ValueType::String:
+        case popo::type::ValueType::String:
             return MySQLColumnType::MYSQL_TYPE_VARCHAR;
-        case neon::type::ValueType::Char:
+        case popo::type::ValueType::Char:
             return MySQLColumnType::MYSQL_TYPE_STRING;
-        case neon::type::ValueType::Bool:
+        case popo::type::ValueType::Bool:
             return MySQLColumnType::MYSQL_TYPE_TINY;
-        case neon::type::ValueType::Null:
+        case popo::type::ValueType::Null:
             return MySQLColumnType::MYSQL_TYPE_NULL;
         default:
             return MySQLColumnType::MYSQL_TYPE_VARCHAR;
     }
 }
 
-std::string Session::value_to_string(const neon::type::Value & val)
+std::string Session::value_to_string(const popo::type::Value & val)
 {
     return val.to_val_string();
 }
 
-uint32_t Session::column_length_for_type(neon::type::ValueType vt)
+uint32_t Session::column_length_for_type(popo::type::ValueType vt)
 {
     switch (vt)
     {
-        case neon::type::ValueType::Int8:
+        case popo::type::ValueType::Int8:
             return 4;
-        case neon::type::ValueType::Uint8:
+        case popo::type::ValueType::Uint8:
             return 3;
-        case neon::type::ValueType::Int16:
+        case popo::type::ValueType::Int16:
             return 6;
-        case neon::type::ValueType::Uint16:
+        case popo::type::ValueType::Uint16:
             return 5;
-        case neon::type::ValueType::Int32:
+        case popo::type::ValueType::Int32:
             return 11;
-        case neon::type::ValueType::Uint32:
+        case popo::type::ValueType::Uint32:
             return 10;
-        case neon::type::ValueType::Int64:
+        case popo::type::ValueType::Int64:
             return 20;
-        case neon::type::ValueType::Uint64:
+        case popo::type::ValueType::Uint64:
             return 20;
-        case neon::type::ValueType::Float32:
+        case popo::type::ValueType::Float32:
             return 12;
-        case neon::type::ValueType::Float64:
+        case popo::type::ValueType::Float64:
             return 22;
-        case neon::type::ValueType::Bool:
+        case popo::type::ValueType::Bool:
             return 1;
-        case neon::type::ValueType::Char:
+        case popo::type::ValueType::Char:
             return 1;
-        case neon::type::ValueType::String:
+        case popo::type::ValueType::String:
             return 255;
-        case neon::type::ValueType::Null:
+        case popo::type::ValueType::Null:
             return 0;
         default:
             return 255;
     }
 }
 
-} // namespace neon::server
+} // namespace popo::server

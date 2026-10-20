@@ -10,7 +10,7 @@
 #include "src/storage/block.h"
 #include "src/storage/common.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 class IoRing;
@@ -29,12 +29,12 @@ public:
     DiskManager(const DiskManager &) = delete;
     DiskManager & operator=(const DiskManager &) = delete;
 
-    neon::base::Result<void> create_table_file(const std::string & table_name);
+    popo::base::Result<void> create_table_file(const std::string & table_name);
     void remove_table_file(const std::string & table_name);
 
-    neon::base::Result<void> read_page(const std::string & table_name, page_id_t page_id, char * dest);
-    neon::base::Result<void> write_page(const std::string & table_name, page_id_t page_id, const char * src);
-    neon::base::Result<page_id_t> allocate_page(const std::string & table_name);
+    popo::base::Result<void> read_page(const std::string & table_name, page_id_t page_id, char * dest);
+    popo::base::Result<void> write_page(const std::string & table_name, page_id_t page_id, const char * src);
+    popo::base::Result<page_id_t> allocate_page(const std::string & table_name);
     page_id_t page_count(const std::string & table_name);
     bool table_file_exists(const std::string & table_name) const;
 
@@ -118,29 +118,29 @@ private:
     TableState * find_table(const std::string & table_name);
     const TableState * find_table(const std::string & table_name) const;
 
-    neon::base::Result<void> load_table(const std::string & table_name, int fd);
-    neon::base::Result<void> write_header(TableState & table);
-    neon::base::Result<void> write_block_meta(TableState & table, uint32_t block_id);
-    neon::base::Result<void> read_block_meta(TableState & table, uint32_t block_id, BlockMeta & meta);
+    popo::base::Result<void> load_table(const std::string & table_name, int fd);
+    popo::base::Result<void> write_header(TableState & table);
+    popo::base::Result<void> write_block_meta(TableState & table, uint32_t block_id);
+    popo::base::Result<void> read_block_meta(TableState & table, uint32_t block_id, BlockMeta & meta);
 
     void touch(TableState & table);
     const PageLoc * lookup(const TableState & table, page_id_t page_id) const;
-    neon::base::Result<uint32_t> alloc_block(TableState & table);
-    neon::base::Result<void> append_entry(TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone);
-    neon::base::Result<void> append_wal_commit();
-    neon::base::Result<void> durable_wal_write(const char * data, uint32_t len);
+    popo::base::Result<uint32_t> alloc_block(TableState & table);
+    popo::base::Result<void> append_entry(TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone);
+    popo::base::Result<void> append_wal_commit();
+    popo::base::Result<void> durable_wal_write(const char * data, uint32_t len);
     void publish_memory(TableState & table);
     void open_wal();
     void replay_wal();
     void reset_wal();
-    neon::base::Result<uint32_t> compress_page(const char * src);
-    neon::base::Result<void> decompress_page(const char * src, size_t src_len, char * dest);
+    popo::base::Result<uint32_t> compress_page(const char * src);
+    popo::base::Result<void> decompress_page(const char * src, size_t src_len, char * dest);
     void abort_table(TableState & table);
     void commit_unlocked();
     void abort_unlocked();
     uint64_t dead_bytes(const TableState & table) const;
     void maybe_gc(TableState & table);
-    neon::base::Result<void> gc_table(TableState & table);
+    popo::base::Result<void> gc_table(TableState & table);
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

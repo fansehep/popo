@@ -33,7 +33,7 @@ static std::string SystemCallErr()
 
 #include <csignal>
 
-namespace neon::base
+namespace popo::base
 {
 
 static void signal_handler(int signal)

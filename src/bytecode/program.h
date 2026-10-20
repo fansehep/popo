@@ -6,10 +6,10 @@
 #include "parser/ast.h"
 #include "type/value.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
-using ConstantValue = std::variant<neon::type::Value, std::string, std::vector<neon::parser::ColumnDef>>;
+using ConstantValue = std::variant<popo::type::Value, std::string, std::vector<popo::parser::ColumnDef>>;
 
 struct Program
 {
@@ -17,7 +17,7 @@ struct Program
     std::vector<ConstantValue> constants;
     std::vector<std::string> result_columns;
 
-    int32_t add_constant(const neon::type::Value & val)
+    int32_t add_constant(const popo::type::Value & val)
     {
         constants.emplace_back(val);
         return static_cast<int32_t>(constants.size() - 1);
@@ -29,7 +29,7 @@ struct Program
         return static_cast<int32_t>(constants.size() - 1);
     }
 
-    int32_t add_column_defs(const std::vector<neon::parser::ColumnDef> & defs)
+    int32_t add_column_defs(const std::vector<popo::parser::ColumnDef> & defs)
     {
         constants.emplace_back(defs);
         return static_cast<int32_t>(constants.size() - 1);
@@ -54,4 +54,4 @@ struct Program
     std::string disassemble() const;
 };
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

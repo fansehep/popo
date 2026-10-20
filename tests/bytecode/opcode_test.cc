@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 #include "src/bytecode/opcode.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
 // ---- opcode_name ----
@@ -128,4 +128,4 @@ TEST(InstructionTest, FourArgConstructor)
     EXPECT_EQ(inst.operand3, 3);
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

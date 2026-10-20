@@ -5,7 +5,7 @@
 #include <vector>
 #include "src/storage/common.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 enum class PageType : uint16_t
@@ -395,4 +395,4 @@ private:
 
 static_assert(sizeof(DataPage) == PAGE_SIZE);
 
-} // namespace neon::storage
+} // namespace popo::storage

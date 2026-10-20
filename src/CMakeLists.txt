@@ -12,13 +12,13 @@ target_include_directories(
 )
 # jemalloc replaces malloc. --as-needed would drop the DSO because no
 # translation unit names a jemalloc symbol.
-find_library(NEON_JEMALLOC NAMES jemalloc REQUIRED)
+find_library(POPO_JEMALLOC NAMES jemalloc REQUIRED)
 target_link_libraries(
         base_lib
         PUBLIC
         cpptrace::cpptrace
         -Wl,--push-state,--no-as-needed
-        ${NEON_JEMALLOC}
+        ${POPO_JEMALLOC}
         -Wl,--pop-state
 )
 
@@ -117,6 +117,8 @@ target_link_libraries(bytecode_lib PUBLIC base_lib type_lib catalog_lib parser_l
 target_include_directories(bytecode_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # Storage library (includes transaction manager)
+# Table pages and the commit log are written through io_uring.
+find_library(POPO_URING NAMES uring REQUIRED)
 add_library(storage_lib
     storage/disk_manager.cc
     storage/io_ring.cc
@@ -129,7 +131,7 @@ add_library(storage_lib
     trancation/manager.cc
 )
 target_include_directories(storage_lib PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog zstd)
+target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog zstd PRIVATE ${POPO_URING})
 
 # Add server library
 add_library(server_lib
@@ -140,6 +142,6 @@ add_library(server_lib
 target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib storage_lib asio_lib spdlog)
 target_include_directories(server_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
-# Add neon-server executable
-add_executable(neon-server server/main.cc)
-target_link_libraries(neon-server PRIVATE server_lib)
+# Add popodb-server executable
+add_executable(popodb-server server/main.cc)
+target_link_libraries(popodb-server PRIVATE server_lib)

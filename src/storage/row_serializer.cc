@@ -3,13 +3,13 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace neon::storage
+namespace popo::storage
 {
 
-using neon::catalog::Schema;
-using neon::type::Row;
-using neon::type::Value;
-using neon::type::ValueType;
+using popo::catalog::Schema;
+using popo::type::Row;
+using popo::type::Value;
+using popo::type::ValueType;
 
 // Helper: size of a fixed-type value in bytes
 static uint32_t fixed_type_size(ValueType type)
@@ -476,4 +476,4 @@ Value RowSerializer::read_column(const char * data, uint32_t len, const Schema &
     return Value();
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

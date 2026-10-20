@@ -62,7 +62,7 @@ Expect expected()
     return e;
 }
 
-neon::test::SqlResult must(neon::test::SqlRunner & db, const std::string & sql)
+popo::test::SqlResult must(popo::test::SqlRunner & db, const std::string & sql)
 {
     auto result = db.exec(sql);
     if (!result.ok)
@@ -72,7 +72,7 @@ neon::test::SqlResult must(neon::test::SqlRunner & db, const std::string & sql)
     return result;
 }
 
-int64_t cell(const neon::test::SqlResult & result, size_t col)
+int64_t cell(const popo::test::SqlResult & result, size_t col)
 {
     if (result.result.rows.size() != 1 || result.result.rows[0]->values_.size() <= col)
     {
@@ -125,7 +125,7 @@ double elapsed_ms(std::chrono::steady_clock::time_point t0)
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-void load(neon::test::SqlRunner & db)
+void load(popo::test::SqlRunner & db)
 {
     must(db, "CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, priority INT)");
     must(db, "CREATE TABLE lineitem (id INT PRIMARY KEY, order_id INT, quantity INT, price INT, discount INT)");
@@ -173,7 +173,7 @@ void check_scalar(const char * name, int64_t got, int64_t want)
     }
 }
 
-void time_query(neon::test::SqlRunner & db, const char * name, const std::string & sql, int64_t want, bool count_rows)
+void time_query(popo::test::SqlRunner & db, const char * name, const std::string & sql, int64_t want, bool count_rows)
 {
     for (int i = 0; i < kRepeats; ++i)
     {
@@ -202,7 +202,7 @@ int main()
     Expect want = expected();
 
     auto dir = prepare_dir("lineitem");
-    neon::test::SqlRunner db(dir);
+    popo::test::SqlRunner db(dir);
     auto t0 = std::chrono::steady_clock::now();
     load(db);
     std::cout << "  load  ms=" << elapsed_ms(t0) << "\n";

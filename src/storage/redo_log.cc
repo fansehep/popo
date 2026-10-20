@@ -2,7 +2,7 @@
 #include <cstring>
 #include <filesystem>
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // ============================================================================
@@ -272,4 +272,4 @@ void RedoLogManager::truncate()
     log_buffer_.clear();
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

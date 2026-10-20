@@ -5,7 +5,7 @@
 #include "server/server.h"
 #include "src/storage/storage_engine.h"
 
-static neon::server::Server * g_server = nullptr;
+static popo::server::Server * g_server = nullptr;
 
 void signal_handler(int sig)
 {
@@ -24,18 +24,18 @@ int main(int argc, char * argv[])
         port = static_cast<uint16_t>(std::stoi(argv[1]));
     }
     spdlog::set_level(spdlog::level::info);
-    spdlog::info("Starting Neon Database Server...");
-    neon::catalog::SchemaManager schema_mgr;
+    spdlog::info("Starting PopoDB Database Server...");
+    popo::catalog::SchemaManager schema_mgr;
 
     // Initialize storage engine
-    neon::storage::StorageEngine engine("data");
+    popo::storage::StorageEngine engine("data");
     engine.init();
 
-    neon::server::Server server(port, schema_mgr, engine);
+    popo::server::Server server(port, schema_mgr, engine);
     g_server = &server;
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
-    SPDLOG_INFO("Neon Database Server v0.1.0");
+    SPDLOG_INFO("PopoDB Database Server v0.1.0");
     SPDLOG_INFO("Listening on port {}", port);
     SPDLOG_INFO("Connect with: mysql -h 127.0.0.1 -P {} -u root", port);
     server.start();

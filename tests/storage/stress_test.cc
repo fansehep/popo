@@ -16,9 +16,9 @@
 #include "src/type/tuple.h"
 #include "src/type/value.h"
 
-using namespace neon::storage;
-using namespace neon::type;
-using namespace neon::catalog;
+using namespace popo::storage;
+using namespace popo::type;
+using namespace popo::catalog;
 namespace fs = std::filesystem;
 
 namespace
@@ -75,7 +75,7 @@ protected:
     void SetUp() override
     {
         std::random_device rd;
-        test_dir = fs::temp_directory_path().string() + "/neon_stress_" + std::to_string(rd());
+        test_dir = fs::temp_directory_path().string() + "/popo_stress_" + std::to_string(rd());
         fs::create_directories(test_dir);
 
         dm = std::make_unique<DiskManager>(test_dir);
@@ -120,7 +120,7 @@ void verify_bplustree_order(TableHeap * heap, int expected_min_count = 0)
 
 TEST_F(StressTest, SequentialInsert5000)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     constexpr int N = 5000;
     for (int i = 0; i < N; ++i)
@@ -157,7 +157,7 @@ TEST_F(StressTest, SequentialInsert5000)
 
 TEST_F(StressTest, ReverseOrderInsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     constexpr int N = 1000;
     for (int i = N - 1; i >= 0; --i)
@@ -172,7 +172,7 @@ TEST_F(StressTest, ReverseOrderInsert)
 
 TEST_F(StressTest, RandomInsertLargePayload)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     // Random order insert with medium payloads — stresses split propagation
     constexpr int N = 300;
@@ -199,7 +199,7 @@ TEST_F(StressTest, RandomInsertLargePayload)
 
 TEST_F(StressTest, HeavyDeleteAndReinsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     // Insert 1000 rows
     constexpr int N = 1000;
@@ -212,7 +212,7 @@ TEST_F(StressTest, HeavyDeleteAndReinsert)
     std::uniform_int_distribution<int> dist(0, N - 1);
 
     // Delete 300 random rows
-    neon::txn::Transaction del_txn(2);
+    popo::txn::Transaction del_txn(2);
     for (int i = 0; i < 300; ++i)
     {
         // Find a row and delete it
@@ -231,7 +231,7 @@ TEST_F(StressTest, HeavyDeleteAndReinsert)
     }
 
     // Reinsert 200 new rows (some same PKs, some new)
-    neon::txn::Transaction ins_txn(3);
+    popo::txn::Transaction ins_txn(3);
     std::set<int> new_ids;
     for (int i = 0; i < 200; ++i)
     {
@@ -268,7 +268,7 @@ TEST_F(StressTest, RepeatedSplitsAndScans)
 
     for (int batch = 0; batch < BATCHES; ++batch)
     {
-        neon::txn::Transaction txn(batch + 1);
+        popo::txn::Transaction txn(batch + 1);
         for (int i = 0; i < BATCH; ++i)
         {
             int id = batch * BATCH + i;
@@ -287,7 +287,7 @@ TEST_F(StressTest, RepeatedSplitsAndScans)
 
 TEST_F(StressTest, TimingLargeScale)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     constexpr int N = 2000;
 
     auto start = std::chrono::steady_clock::now();
@@ -313,7 +313,7 @@ TEST_F(StressTest, TimingLargeScale)
     auto scan_end = std::chrono::steady_clock::now();
 
     // Update 100 rows
-    neon::txn::Transaction upd_txn(2);
+    popo::txn::Transaction upd_txn(2);
     for (int i = 0; i < 100; ++i)
     {
         auto it2 = heap->iter();
@@ -349,7 +349,7 @@ TEST_F(StressTest, TimingLargeScale)
 // Test: insert with negative and zero PK values
 TEST_F(StressTest, NegativeAndZeroPK)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     std::vector<int> pks = {-500, -200, 0, -1, -499, -201, -3, -2, 1, 2, 10, 5};
     for (int pk : pks)
@@ -377,7 +377,7 @@ TEST_F(StressTest, NegativeAndZeroPK)
 // Test: interleaved insert and delete on same PK
 TEST_F(StressTest, InterleavedInsertDelete)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
 
     for (int cycle = 0; cycle < 10; ++cycle)
     {
@@ -387,7 +387,7 @@ TEST_F(StressTest, InterleavedInsertDelete)
             heap->insert_row(&txn, make_row(schema, base + i, "cycle"));
         }
         // Delete first 10 of this cycle
-        neon::txn::Transaction del_txn(cycle + 100);
+        popo::txn::Transaction del_txn(cycle + 100);
         for (int i = 0; i < 10; ++i)
         {
             auto it = heap->iter();
@@ -410,7 +410,7 @@ TEST_F(StressTest, InterleavedInsertDelete)
 // Test: full table scan after each of many inserts
 TEST_F(StressTest, ScanAfterEachInsert)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     constexpr int N = 500;
 
     for (int i = 0; i < N; ++i)
@@ -438,7 +438,7 @@ TEST_F(StressTest, ScanAfterEachInsert)
 // Test: update rows to larger payload sizes
 TEST_F(StressTest, UpdateToLargerPayload)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     constexpr int N = 200;
 
     for (int i = 0; i < N; ++i)
@@ -447,7 +447,7 @@ TEST_F(StressTest, UpdateToLargerPayload)
     }
 
     // Update every 3rd row to a much larger payload
-    neon::txn::Transaction upd_txn(2);
+    popo::txn::Transaction upd_txn(2);
     for (int i = 0; i < N; i += 3)
     {
         auto it = heap->iter();
@@ -473,7 +473,7 @@ TEST_F(StressTest, UpdateToLargerPayload)
 // Test: deep tree structure with many small payloads
 TEST_F(StressTest, DeepTreeManyRows)
 {
-    neon::txn::Transaction txn(1);
+    popo::txn::Transaction txn(1);
     constexpr int N = 10000;
 
     for (int i = 0; i < N; ++i)

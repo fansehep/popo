@@ -3,7 +3,7 @@
 #include <cctype>
 #include <unordered_map>
 
-namespace neon::parser
+namespace popo::parser
 {
 
 Lexer::Lexer(const std::string & input) : input_(input)
@@ -362,4 +362,4 @@ std::vector<Token> Lexer::tokenize()
     return tokens;
 }
 
-} // namespace neon::parser
+} // namespace popo::parser

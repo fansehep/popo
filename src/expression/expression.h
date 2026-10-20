@@ -6,12 +6,12 @@
 #include "src/type/tuple.h"
 #include "src/type/value.h"
 
-namespace neon::expression
+namespace popo::expression
 {
 
-using neon::base::Error;
-using neon::type::Row;
-using neon::type::Value;
+using popo::base::Error;
+using popo::type::Row;
+using popo::type::Value;
 
 // 表达式基类
 class Expression
@@ -23,7 +23,7 @@ public:
     virtual std::pair<bool, Value> evaluate(const Row & row) = 0;
 
     // 获取表达式的类型
-    virtual neon::type::ValueType get_type() const = 0;
+    virtual popo::type::ValueType get_type() const = 0;
 };
 
 using ExpressionRef = std::shared_ptr<Expression>;
@@ -36,7 +36,7 @@ public:
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 private:
     Value value_;
@@ -46,15 +46,15 @@ private:
 class ColumnExpression : public Expression
 {
 public:
-    ColumnExpression(size_t column_index, neon::type::ValueType type);
+    ColumnExpression(size_t column_index, popo::type::ValueType type);
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 private:
     size_t column_index_;
-    neon::type::ValueType type_;
+    popo::type::ValueType type_;
 };
 
 // 二元操作表达式基类
@@ -63,7 +63,7 @@ class BinaryExpression : public Expression
 public:
     BinaryExpression(ExpressionRef left, ExpressionRef right);
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 protected:
     ExpressionRef left_;
@@ -88,7 +88,7 @@ public:
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 private:
     ComparisonType type_;
@@ -110,7 +110,7 @@ public:
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 private:
     ArithmeticType type_;
@@ -131,7 +131,7 @@ public:
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 private:
     LogicalType type_;
@@ -143,7 +143,7 @@ class UnaryExpression : public Expression
 public:
     explicit UnaryExpression(ExpressionRef operand);
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 
 protected:
     ExpressionRef operand_;
@@ -157,7 +157,7 @@ public:
 
     std::pair<bool, Value> evaluate(const Row & row) override;
 
-    neon::type::ValueType get_type() const override;
+    popo::type::ValueType get_type() const override;
 };
 
-} // namespace neon::expression
+} // namespace popo::expression

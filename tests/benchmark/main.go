@@ -1,4 +1,4 @@
-// Neon Database Large-Scale Benchmark
+// PopoDB Database Large-Scale Benchmark
 // Tests INSERT and UPDATE performance with millions of rows.
 //
 // Usage:
@@ -40,16 +40,16 @@ func (r BenchResult) String() string {
 
 func main() {
 	cfg := BenchConfig{}
-	flag.StringVar(&cfg.Host, "host", "127.0.0.1", "Neon server host")
-	flag.IntVar(&cfg.Port, "port", 3307, "Neon server port")
+	flag.StringVar(&cfg.Host, "host", "127.0.0.1", "PopoDB server host")
+	flag.IntVar(&cfg.Port, "port", 3307, "PopoDB server port")
 	flag.StringVar(&cfg.User, "user", "root", "MySQL user")
-	flag.StringVar(&cfg.DBName, "db", "neon", "Database name")
+	flag.StringVar(&cfg.DBName, "db", "popo", "Database name")
 	flag.IntVar(&cfg.NumRows, "rows", 100000, "Number of rows to insert/update")
 	flag.IntVar(&cfg.BatchSize, "batch", 500, "Rows per transaction batch")
 	flag.Parse()
 
 	fmt.Println(strings.Repeat("=", 72))
-	fmt.Printf("  Neon Database Large-Scale Benchmark\n")
+	fmt.Printf("  PopoDB Database Large-Scale Benchmark\n")
 	fmt.Printf("  Target: %s:%d/%s  |  Rows: %,d  |  Batch: %d\n",
 		cfg.Host, cfg.Port, cfg.DBName, cfg.NumRows, cfg.BatchSize)
 	fmt.Println(strings.Repeat("=", 72))
@@ -70,7 +70,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "FATAL: cannot connect to %s:%d: %v\n", cfg.Host, cfg.Port, err)
 		os.Exit(1)
 	}
-	fmt.Println("  [OK] Connected to Neon server\n")
+	fmt.Println("  [OK] Connected to PopoDB server\n")
 
 	// --- Setup ---
 	setupDB(db)
@@ -239,7 +239,7 @@ func runPointUpdate(db *sql.DB, cfg BenchConfig) BenchResult {
 }
 
 func mustCount(db *sql.DB, table string) int64 {
-	// Neon's aggregation result set has protocol differences with Go driver.
+	// PopoDB's aggregation result set has protocol differences with Go driver.
 	// Use a simple scan-based count as workaround.
 	rows, err := db.Query(fmt.Sprintf("SELECT id FROM %s", table))
 	if err != nil {

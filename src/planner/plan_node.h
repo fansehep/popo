@@ -6,7 +6,7 @@
 #include "parser/ast.h"
 #include "type/value.h"
 
-namespace neon::planner
+namespace popo::planner
 {
 
 enum class PlanNodeType
@@ -49,7 +49,7 @@ struct ScanNode : PlanNode
     std::string table_name;
     std::string alias; // optional alias for the table
     std::vector<std::string> column_names; // resolved column names
-    std::vector<neon::type::ValueType> column_types; // resolved column types
+    std::vector<popo::type::ValueType> column_types; // resolved column types
     ScanNode() { type = PlanNodeType::Scan; }
 };
 
@@ -57,7 +57,7 @@ struct ScanNode : PlanNode
 struct FilterNode : PlanNode
 {
     PlanNodePtr child;
-    neon::parser::ExprPtr condition;
+    popo::parser::ExprPtr condition;
     FilterNode() { type = PlanNodeType::Filter; }
 };
 
@@ -65,7 +65,7 @@ struct FilterNode : PlanNode
 struct ProjectNode : PlanNode
 {
     PlanNodePtr child;
-    std::vector<neon::parser::ExprPtr> expressions; // output expressions
+    std::vector<popo::parser::ExprPtr> expressions; // output expressions
     std::vector<std::string> output_names; // output column names/aliases
     ProjectNode() { type = PlanNodeType::Project; }
 };
@@ -73,10 +73,10 @@ struct ProjectNode : PlanNode
 // Join two inputs
 struct JoinNode : PlanNode
 {
-    neon::parser::JoinType join_type;
+    popo::parser::JoinType join_type;
     PlanNodePtr left;
     PlanNodePtr right;
-    neon::parser::ExprPtr condition; // ON condition
+    popo::parser::ExprPtr condition; // ON condition
     JoinNode() { type = PlanNodeType::Join; }
 };
 
@@ -84,8 +84,8 @@ struct JoinNode : PlanNode
 struct AggNode : PlanNode
 {
     PlanNodePtr child;
-    std::vector<neon::parser::ExprPtr> group_by; // GROUP BY expressions
-    std::vector<neon::parser::ExprPtr> agg_exprs; // aggregate expressions (COUNT, SUM, etc.)
+    std::vector<popo::parser::ExprPtr> group_by; // GROUP BY expressions
+    std::vector<popo::parser::ExprPtr> agg_exprs; // aggregate expressions (COUNT, SUM, etc.)
     std::vector<std::string> output_names; // output column names
     AggNode() { type = PlanNodeType::Agg; }
 };
@@ -94,7 +94,7 @@ struct AggNode : PlanNode
 struct SortNode : PlanNode
 {
     PlanNodePtr child;
-    std::vector<neon::parser::OrderByItem> order_by;
+    std::vector<popo::parser::OrderByItem> order_by;
     SortNode() { type = PlanNodeType::Sort; }
 };
 
@@ -111,7 +111,7 @@ struct InsertNode : PlanNode
 {
     std::string table_name;
     std::vector<std::string> columns;
-    std::vector<std::vector<neon::parser::ExprPtr>> values;
+    std::vector<std::vector<popo::parser::ExprPtr>> values;
     InsertNode() { type = PlanNodeType::Insert; }
 };
 
@@ -119,8 +119,8 @@ struct InsertNode : PlanNode
 struct UpdateNode : PlanNode
 {
     std::string table_name;
-    std::vector<neon::parser::UpdateAssignment> assignments;
-    neon::parser::ExprPtr where_clause; // optional
+    std::vector<popo::parser::UpdateAssignment> assignments;
+    popo::parser::ExprPtr where_clause; // optional
     UpdateNode() { type = PlanNodeType::Update; }
 };
 
@@ -128,7 +128,7 @@ struct UpdateNode : PlanNode
 struct DeleteNode : PlanNode
 {
     std::string table_name;
-    neon::parser::ExprPtr where_clause; // optional
+    popo::parser::ExprPtr where_clause; // optional
     DeleteNode() { type = PlanNodeType::Delete; }
 };
 
@@ -136,7 +136,7 @@ struct DeleteNode : PlanNode
 struct CreateTableNode : PlanNode
 {
     std::string table_name;
-    std::vector<neon::parser::ColumnDef> columns;
+    std::vector<popo::parser::ColumnDef> columns;
     CreateTableNode() { type = PlanNodeType::CreateTable; }
 };
 
@@ -207,4 +207,4 @@ struct SelectSystemVarNode : PlanNode
     SelectSystemVarNode() { type = PlanNodeType::SelectSystemVar; }
 };
 
-} // namespace neon::planner
+} // namespace popo::planner

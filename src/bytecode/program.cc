@@ -1,7 +1,7 @@
 #include "bytecode/program.h"
 #include <sstream>
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
 std::string Program::disassemble() const
@@ -85,4 +85,4 @@ std::string Program::disassemble() const
     return oss.str();
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

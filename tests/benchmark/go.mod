@@ -1,4 +1,4 @@
-module neon-benchmark
+module popodb-benchmark
 
 go 1.26.2
 

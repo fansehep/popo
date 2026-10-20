@@ -4,7 +4,7 @@
 #include "src/storage/common.h"
 #include "src/storage/redo_log.h"
 
-using namespace neon::storage;
+using namespace popo::storage;
 namespace fs = std::filesystem;
 
 class RedoLogTest : public ::testing::Test
@@ -16,7 +16,7 @@ protected:
     void SetUp() override
     {
         std::random_device rd;
-        test_dir = fs::temp_directory_path().string() + "/neon_rl_test_" + std::to_string(rd());
+        test_dir = fs::temp_directory_path().string() + "/popo_rl_test_" + std::to_string(rd());
         fs::create_directories(test_dir);
         log_path = test_dir + "/redo.log";
     }

@@ -4,7 +4,7 @@
 #include "src/storage/btree_page.h"
 #include "src/storage/page.h"
 
-using namespace neon::storage;
+using namespace popo::storage;
 
 namespace
 {

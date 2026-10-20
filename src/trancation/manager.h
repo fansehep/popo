@@ -7,13 +7,13 @@
 #include "src/storage/redo_log.h"
 #include "src/trancation/txn.h"
 
-namespace neon::txn
+namespace popo::txn
 {
 
 class TxnManager
 {
 public:
-    explicit TxnManager(neon::storage::RedoLogManager * redo_log);
+    explicit TxnManager(popo::storage::RedoLogManager * redo_log);
 
     // Begin the single active transaction. A second begin throws.
     Transaction * begin_txn();
@@ -26,16 +26,16 @@ public:
     void abort(Transaction * txn);
 
     // Get a transaction by ID
-    Transaction * get_txn(neon::storage::txn_id_t txn_id);
+    Transaction * get_txn(popo::storage::txn_id_t txn_id);
 
     // Remove completed transaction from active map
-    void remove_txn(neon::storage::txn_id_t txn_id);
+    void remove_txn(popo::storage::txn_id_t txn_id);
 
 private:
-    neon::storage::RedoLogManager * redo_log_;
-    std::atomic<neon::storage::txn_id_t> next_txn_id_{1};
+    popo::storage::RedoLogManager * redo_log_;
+    std::atomic<popo::storage::txn_id_t> next_txn_id_{1};
     std::mutex mutex_;
-    std::unordered_map<neon::storage::txn_id_t, std::unique_ptr<Transaction>> active_txns_;
+    std::unordered_map<popo::storage::txn_id_t, std::unique_ptr<Transaction>> active_txns_;
 };
 
-} // namespace neon::txn
+} // namespace popo::txn

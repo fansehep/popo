@@ -12,7 +12,7 @@
 #include "src/storage/table_heap.h"
 #include "src/trancation/manager.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 class StorageEngine
@@ -29,21 +29,21 @@ public:
 
     // Table management
     TableHeap * get_table_heap(const std::string & table_name);
-    void create_table(const std::string & table_name, const neon::catalog::Schema & schema);
+    void create_table(const std::string & table_name, const popo::catalog::Schema & schema);
     void create_index(const std::string & table_name, const std::string & index_name, int32_t column, bool unique);
     void drop_table(const std::string & table_name);
     bool table_exists(const std::string & table_name) const;
 
     // Transaction interface (delegates to TxnManager)
-    neon::txn::Transaction * begin_txn();
-    void commit_txn(neon::txn::Transaction * txn);
-    void abort_txn(neon::txn::Transaction * txn);
+    popo::txn::Transaction * begin_txn();
+    void commit_txn(popo::txn::Transaction * txn);
+    void abort_txn(popo::txn::Transaction * txn);
 
     // Component access
     BufferPoolManager * buffer_pool() { return buffer_pool_.get(); }
     DiskManager * disk_manager() { return disk_manager_.get(); }
     RedoLogManager * redo_log() { return redo_log_.get(); }
-    neon::txn::TxnManager * txn_manager() { return txn_mgr_.get(); }
+    popo::txn::TxnManager * txn_manager() { return txn_mgr_.get(); }
 
     // Flush all dirty pages
     void flush_all();
@@ -61,10 +61,10 @@ private:
     std::unique_ptr<DiskManager> disk_manager_;
     std::unique_ptr<BufferPoolManager> buffer_pool_;
     std::unique_ptr<RedoLogManager> redo_log_;
-    std::unique_ptr<neon::txn::TxnManager> txn_mgr_;
+    std::unique_ptr<popo::txn::TxnManager> txn_mgr_;
 
     std::unordered_map<std::string, std::unique_ptr<TableHeap>> table_heaps_;
     mutable std::mutex mutex_;
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

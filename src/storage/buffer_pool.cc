@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // ---------------------------------------------------------------------------
@@ -327,4 +327,4 @@ std::optional<frame_id_t> BufferPoolManager::get_free_frame()
     return fid;
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

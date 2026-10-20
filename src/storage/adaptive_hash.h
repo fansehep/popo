@@ -7,7 +7,7 @@
 #include <vector>
 #include "src/storage/common.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // InnoDB-style adaptive hash: a leaf is promoted after a few searches, then
@@ -69,4 +69,4 @@ private:
     std::unordered_set<page_id_t> hot_;
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

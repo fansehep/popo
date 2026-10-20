@@ -1,6 +1,6 @@
 #include "src/storage/lru_replacer.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 LRUReplacer::LRUReplacer(size_t capacity) : capacity_(capacity)
@@ -73,4 +73,4 @@ size_t LRUReplacer::size() const
     return lru_list_.size();
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

@@ -6,7 +6,7 @@
 #include <vector>
 #include "src/storage/common.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 enum class LogType : uint8_t
@@ -77,4 +77,4 @@ private:
     void open_log_file();
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

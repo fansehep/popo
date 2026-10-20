@@ -1,9 +1,9 @@
 #include "src/trancation/manager.h"
 
-namespace neon::txn
+namespace popo::txn
 {
 
-TxnManager::TxnManager(neon::storage::RedoLogManager * redo_log) : redo_log_(redo_log)
+TxnManager::TxnManager(popo::storage::RedoLogManager * redo_log) : redo_log_(redo_log)
 {
 }
 
@@ -22,9 +22,9 @@ Transaction * TxnManager::begin_txn()
     auto txn = std::make_unique<Transaction>(txn_id);
 
     // Log BEGIN record
-    neon::storage::LogRecord begin_record;
+    popo::storage::LogRecord begin_record;
     begin_record.txn_id = txn_id;
-    begin_record.type = neon::storage::LogType::BEGIN;
+    begin_record.type = popo::storage::LogType::BEGIN;
     auto lsn = redo_log_->append(begin_record);
     txn->set_start_lsn(lsn);
 
@@ -36,9 +36,9 @@ Transaction * TxnManager::begin_txn()
 void TxnManager::commit(Transaction * txn)
 {
     // Log COMMIT record
-    neon::storage::LogRecord commit_record;
+    popo::storage::LogRecord commit_record;
     commit_record.txn_id = txn->txn_id();
-    commit_record.type = neon::storage::LogType::COMMIT;
+    commit_record.type = popo::storage::LogType::COMMIT;
     redo_log_->append(commit_record);
 
     // Flush WAL to ensure durability
@@ -51,9 +51,9 @@ void TxnManager::commit(Transaction * txn)
 void TxnManager::abort(Transaction * txn)
 {
     // Log ABORT record
-    neon::storage::LogRecord abort_record;
+    popo::storage::LogRecord abort_record;
     abort_record.txn_id = txn->txn_id();
-    abort_record.type = neon::storage::LogType::ABORT;
+    abort_record.type = popo::storage::LogType::ABORT;
     redo_log_->append(abort_record);
 
     redo_log_->flush();
@@ -62,7 +62,7 @@ void TxnManager::abort(Transaction * txn)
     remove_txn(txn->txn_id());
 }
 
-Transaction * TxnManager::get_txn(neon::storage::txn_id_t txn_id)
+Transaction * TxnManager::get_txn(popo::storage::txn_id_t txn_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = active_txns_.find(txn_id);
@@ -73,10 +73,10 @@ Transaction * TxnManager::get_txn(neon::storage::txn_id_t txn_id)
     return nullptr;
 }
 
-void TxnManager::remove_txn(neon::storage::txn_id_t txn_id)
+void TxnManager::remove_txn(popo::storage::txn_id_t txn_id)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     active_txns_.erase(txn_id);
 }
 
-} // namespace neon::txn
+} // namespace popo::txn

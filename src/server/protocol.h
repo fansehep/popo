@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace neon::server
+namespace popo::server
 {
 
 struct PacketHeader
@@ -75,4 +75,4 @@ public:
     static std::string read_query_string(const uint8_t * payload, size_t length);
 };
 
-} // namespace neon::server
+} // namespace popo::server

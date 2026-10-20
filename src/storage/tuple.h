@@ -6,25 +6,25 @@
 #include "src/storage/row_serializer.h"
 #include "src/type/tuple.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // Physical tuple. The byte layout is defined by Schema: a null bitmap and
 // column payloads, with no per-column type tag. Schema.columns_[i].data_type_
 // is what makes those bytes a value. Form at insert, deform when the executor
-// needs a neon::type::Value.
+// needs a popo::type::Value.
 class Tuple
 {
 public:
     Tuple() = default;
     explicit Tuple(std::vector<char> data) : data_(std::move(data)) { }
 
-    static Tuple form(const neon::catalog::Schema & schema, const neon::type::Row & row)
+    static Tuple form(const popo::catalog::Schema & schema, const popo::type::Row & row)
     {
         return Tuple(RowSerializer::serialize(row, schema));
     }
 
-    [[nodiscard]] neon::type::Row deform(const neon::catalog::Schema & schema) const
+    [[nodiscard]] popo::type::Row deform(const popo::catalog::Schema & schema) const
     {
         return RowSerializer::deserialize(data_.data(), static_cast<uint32_t>(data_.size()), schema);
     }
@@ -38,4 +38,4 @@ private:
     std::vector<char> data_;
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

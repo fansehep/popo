@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Neon LANGUAGES C CXX)
+project(popodb LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 set(CMAKE_CXX_STANDARD 23)

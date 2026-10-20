@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace neon::storage
+namespace popo::storage
 {
 
 using page_id_t = uint32_t;
@@ -27,13 +27,13 @@ struct RowId
     bool is_valid() const { return page_id != INVALID_PAGE_ID; }
 };
 
-} // namespace neon::storage
+} // namespace popo::storage
 
 // Hash support for RowId
 template <>
-struct std::hash<neon::storage::RowId>
+struct std::hash<popo::storage::RowId>
 {
-    size_t operator()(const neon::storage::RowId & rid) const
+    size_t operator()(const popo::storage::RowId & rid) const
     {
         return std::hash<uint64_t>()((static_cast<uint64_t>(rid.page_id) << 16) | rid.slot_id);
     }

@@ -12,15 +12,15 @@
 #include <zstd.h>
 #include "src/storage/io_ring.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 namespace
 {
 
-constexpr uint32_t WAL_MAGIC = 0x4C41574Eu; // 'NWAL'
+constexpr uint32_t WAL_MAGIC = 0x4C415750u; // 'PWAL'
 constexpr uint32_t WAL_VERSION = 1;
-constexpr uint32_t WAL_REC_MAGIC = 0x4345524Eu; // 'NREC'
+constexpr uint32_t WAL_REC_MAGIC = 0x43455250u; // 'PREC'
 constexpr uint64_t WAL_CHUNK = 1ull << 20;
 constexpr uint32_t WAL_REC_LIMIT = 256u << 20;
 
@@ -171,23 +171,23 @@ DiskManager::~DiskManager()
     }
 }
 
-neon::base::Result<uint32_t> DiskManager::compress_page(const char * src)
+popo::base::Result<uint32_t> DiskManager::compress_page(const char * src)
 {
     size_t n = ZSTD_compress2(static_cast<ZSTD_CCtx *>(cctx_), comp_buf_.data(), comp_buf_.size(), src, PAGE_SIZE);
     if (ZSTD_isError(n))
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), ZSTD_getErrorName(n)));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), ZSTD_getErrorName(n)));
     }
     return static_cast<uint32_t>(n);
 }
 
-neon::base::Result<void> DiskManager::decompress_page(const char * src, size_t src_len, char * dest)
+popo::base::Result<void> DiskManager::decompress_page(const char * src, size_t src_len, char * dest)
 {
     size_t n = ZSTD_decompressDCtx(static_cast<ZSTD_DCtx *>(dctx_), dest, PAGE_SIZE, src, src_len);
     if (ZSTD_isError(n) || n != PAGE_SIZE)
     {
-        return std::unexpected(neon::base::Error(
-            static_cast<int32_t>(neon::base::InternalErr), ZSTD_isError(n) ? ZSTD_getErrorName(n) : "decompressed page size mismatch"));
+        return std::unexpected(popo::base::Error(
+            static_cast<int32_t>(popo::base::InternalErr), ZSTD_isError(n) ? ZSTD_getErrorName(n) : "decompressed page size mismatch"));
     }
     return {};
 }
@@ -217,17 +217,17 @@ const DiskManager::TableState * DiskManager::find_table(const std::string & tabl
     return &it->second;
 }
 
-neon::base::Result<void> DiskManager::read_block_meta(TableState & table, uint32_t block_id, BlockMeta & meta)
+popo::base::Result<void> DiskManager::read_block_meta(TableState & table, uint32_t block_id, BlockMeta & meta)
 {
     std::memset(&meta, 0, sizeof(meta));
     return io_->read_at(table.fd, &meta, sizeof(meta), block_file_offset(block_id));
 }
 
-neon::base::Result<void> DiskManager::write_block_meta(TableState & table, uint32_t block_id)
+popo::base::Result<void> DiskManager::write_block_meta(TableState & table, uint32_t block_id)
 {
     if (block_id >= table.blocks.size())
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "block id out of range"));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "block id out of range"));
     }
     auto result = io_->write_at(table.fd, &table.blocks[block_id], sizeof(BlockMeta), block_file_offset(block_id));
     if (result)
@@ -237,7 +237,7 @@ neon::base::Result<void> DiskManager::write_block_meta(TableState & table, uint3
     return result;
 }
 
-neon::base::Result<void> DiskManager::write_header(TableState & table)
+popo::base::Result<void> DiskManager::write_header(TableState & table)
 {
     alignas(FileHeader) char buf[FILE_HEADER_SIZE];
     std::memset(buf, 0, sizeof(buf));
@@ -245,7 +245,7 @@ neon::base::Result<void> DiskManager::write_header(TableState & table)
     return io_->write_at(table.fd, buf, FILE_HEADER_SIZE, 0);
 }
 
-neon::base::Result<void> DiskManager::load_table(const std::string & table_name, int fd)
+popo::base::Result<void> DiskManager::load_table(const std::string & table_name, int fd)
 {
     TableState table;
     table.fd = fd;
@@ -256,7 +256,7 @@ neon::base::Result<void> DiskManager::load_table(const std::string & table_name,
     }
     if (table.header.magic != FILE_MAGIC || table.header.version != FILE_VERSION || table.header.block_size != BLOCK_SIZE)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "bad table file header: " + table_name));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "bad table file header: " + table_name));
     }
 
     table.blocks.resize(table.header.block_count);
@@ -350,26 +350,26 @@ neon::base::Result<void> DiskManager::load_table(const std::string & table_name,
     return {};
 }
 
-neon::base::Result<void> DiskManager::create_table_file(const std::string & table_name)
+popo::base::Result<void> DiskManager::create_table_file(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     std::string path = table_file_path(table_name);
     if (std::filesystem::exists(path) || tables_.contains(table_name))
     {
         return std::unexpected(
-            neon::base::Error(static_cast<int32_t>(neon::base::TableAlreadyExists), "Table file already exists: " + path));
+            popo::base::Error(static_cast<int32_t>(popo::base::TableAlreadyExists), "Table file already exists: " + path));
     }
 
     int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
     if (fd < 0)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to create table file: " + path));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Failed to create table file: " + path));
     }
     if (::ftruncate(fd, FILE_HEADER_SIZE) != 0)
     {
         ::close(fd);
         std::filesystem::remove(path);
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Failed to size table file: " + path));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Failed to size table file: " + path));
     }
 
     TableState table;
@@ -424,13 +424,13 @@ const DiskManager::PageLoc * DiskManager::lookup(const TableState & table, page_
     return nullptr;
 }
 
-neon::base::Result<void> DiskManager::read_page(const std::string & table_name, page_id_t page_id, char * dest)
+popo::base::Result<void> DiskManager::read_page(const std::string & table_name, page_id_t page_id, char * dest)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     TableState * table = find_table(table_name);
     if (table == nullptr)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Table file does not exist: " + table_name));
     }
     const PageLoc * loc = lookup(*table, page_id);
     if (loc == nullptr || loc->tombstone || loc->comp_size == 0)
@@ -472,7 +472,7 @@ void DiskManager::touch(TableState & table)
     table.snap.block_dirty = table.block_dirty;
 }
 
-neon::base::Result<uint32_t> DiskManager::alloc_block(TableState & table)
+popo::base::Result<uint32_t> DiskManager::alloc_block(TableState & table)
 {
     uint32_t id = NO_BLOCK;
     if (!table.free_blocks.empty())
@@ -487,7 +487,7 @@ neon::base::Result<uint32_t> DiskManager::alloc_block(TableState & table)
         off_t bytes = static_cast<off_t>(FILE_HEADER_SIZE) + static_cast<off_t>(new_count) * BLOCK_SIZE;
         if (::ftruncate(table.fd, bytes) != 0)
         {
-            return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "ftruncate failed"));
+            return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "ftruncate failed"));
         }
         table.grew = true;
         table.header.block_count = new_count;
@@ -507,13 +507,13 @@ neon::base::Result<uint32_t> DiskManager::alloc_block(TableState & table)
     return id;
 }
 
-neon::base::Result<void> DiskManager::append_entry(
+popo::base::Result<void> DiskManager::append_entry(
     TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone)
 {
     touch(table);
     if (comp_size > BLOCK_SIZE - BLOCK_META_SIZE)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "compressed page exceeds block payload"));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "compressed page exceeds block payload"));
     }
 
     auto fits = [&](uint32_t id) {
@@ -584,13 +584,13 @@ neon::base::Result<void> DiskManager::append_entry(
     return {};
 }
 
-neon::base::Result<void> DiskManager::write_page(const std::string & table_name, page_id_t page_id, const char * src)
+popo::base::Result<void> DiskManager::write_page(const std::string & table_name, page_id_t page_id, const char * src)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     TableState * table = find_table(table_name);
     if (table == nullptr)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Table file does not exist: " + table_name));
     }
     auto comp_size = compress_page(src);
     if (!comp_size)
@@ -620,13 +620,13 @@ neon::base::Result<void> DiskManager::write_page(const std::string & table_name,
     return {};
 }
 
-neon::base::Result<page_id_t> DiskManager::allocate_page(const std::string & table_name)
+popo::base::Result<page_id_t> DiskManager::allocate_page(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
     TableState * table = find_table(table_name);
     if (table == nullptr)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "Table file does not exist: " + table_name));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Table file does not exist: " + table_name));
     }
     if (in_txn_)
     {
@@ -740,15 +740,10 @@ void DiskManager::open_wal()
         uint32_t version = WAL_VERSION;
         std::memcpy(buf, &magic, sizeof(magic));
         std::memcpy(buf + sizeof(magic), &version, sizeof(version));
-        auto written = io_->write_at(wal_fd_, buf, FILE_HEADER_SIZE, 0);
+        auto written = io_->write_and_fsync(wal_fd_, buf, FILE_HEADER_SIZE, 0, false);
         if (!written)
         {
             throw std::runtime_error(written.error().error_message);
-        }
-        auto synced = io_->fsync(wal_fd_);
-        if (!synced)
-        {
-            throw std::runtime_error(synced.error().error_message);
         }
         wal_end_ = FILE_HEADER_SIZE;
         wal_alloc_ = FILE_HEADER_SIZE;
@@ -936,28 +931,32 @@ void DiskManager::replay_wal()
                 close_fds();
                 throw std::runtime_error("failed to extend table file during recovery");
             }
+            std::vector<IoRing::Write> writes;
+            writes.reserve(item.pieces.size());
             for (const Piece & piece : item.pieces)
             {
-                auto written = io_->write_at(fd, piece.bytes.data(), static_cast<uint32_t>(piece.bytes.size()), piece.offset);
-                if (!written)
+                if (piece.bytes.empty())
                 {
-                    close_fds();
-                    throw std::runtime_error(written.error().error_message);
+                    continue;
                 }
+                writes.push_back({piece.bytes.data(), static_cast<uint32_t>(piece.bytes.size()), piece.offset});
             }
+            auto written = io_->write_batch(fd, writes.data(), writes.size());
+            if (!written)
+            {
+                close_fds();
+                throw std::runtime_error(written.error().error_message);
+            }
+            writes.clear();
             for (const auto & [block_id, meta] : item.metas)
             {
-                auto written = io_->write_at(fd, &meta, sizeof(meta), block_file_offset(block_id));
-                if (!written)
-                {
-                    close_fds();
-                    throw std::runtime_error(written.error().error_message);
-                }
+                writes.push_back({&meta, sizeof(meta), block_file_offset(block_id)});
             }
-            alignas(8) char header_buf[FILE_HEADER_SIZE];
+            alignas(FileHeader) char header_buf[FILE_HEADER_SIZE];
             std::memset(header_buf, 0, sizeof(header_buf));
             std::memcpy(header_buf, &item.header, sizeof(item.header));
-            auto written = io_->write_at(fd, header_buf, FILE_HEADER_SIZE, 0);
+            writes.push_back({header_buf, FILE_HEADER_SIZE, 0});
+            written = io_->write_batch(fd, writes.data(), writes.size());
             if (!written)
             {
                 close_fds();
@@ -995,7 +994,7 @@ void DiskManager::reset_wal()
     }
 }
 
-neon::base::Result<void> DiskManager::durable_wal_write(const char * data, uint32_t len)
+popo::base::Result<void> DiskManager::durable_wal_write(const char * data, uint32_t len)
 {
     uint64_t need = wal_end_ + len;
     bool grew = false;
@@ -1008,26 +1007,23 @@ neon::base::Result<void> DiskManager::durable_wal_write(const char * data, uint3
         }
         if (::ftruncate(wal_fd_, static_cast<off_t>(alloc)) != 0)
         {
-            return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "failed to extend commit log"));
+            return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "failed to extend commit log"));
         }
         wal_alloc_ = alloc;
         grew = true;
     }
-    auto written = io_->write_at(wal_fd_, data, len, wal_end_);
+    // The write and its barrier ride one linked submission; commit does not
+    // return before the record is durable.
+    auto written = io_->write_and_fsync(wal_fd_, data, len, wal_end_, !grew);
     if (!written)
     {
         return written;
-    }
-    auto synced = grew ? io_->fsync(wal_fd_) : io_->sync_writes(wal_fd_, nullptr, 0, true);
-    if (!synced)
-    {
-        return synced;
     }
     wal_end_ += len;
     return {};
 }
 
-neon::base::Result<void> DiskManager::append_wal_commit()
+popo::base::Result<void> DiskManager::append_wal_commit()
 {
     wal_payload_.clear();
     if (wal_payload_.capacity() < 64 * 1024)
@@ -1100,7 +1096,7 @@ neon::base::Result<void> DiskManager::append_wal_commit()
 
     if (payload.size() > WAL_REC_LIMIT)
     {
-        return std::unexpected(neon::base::Error(static_cast<int32_t>(neon::base::InternalErr), "commit record exceeds limit"));
+        return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "commit record exceeds limit"));
     }
     wal_record_.clear();
     wal_record_.reserve(12 + payload.size());
@@ -1116,38 +1112,50 @@ neon::base::Result<void> DiskManager::append_wal_commit()
 
 void DiskManager::publish_memory(TableState & table)
 {
+    std::vector<IoRing::Write> writes;
+    writes.reserve(table.pending_io.size());
     for (const PendingWrite & pending : table.pending_io)
     {
         if (!pending.bytes || pending.bytes->empty())
         {
             continue;
         }
-        auto written = io_->write_at(table.fd, pending.bytes->data(), static_cast<uint32_t>(pending.bytes->size()), pending.offset);
-        if (!written)
-        {
-            throw std::runtime_error(written.error().error_message);
-        }
+        writes.push_back({pending.bytes->data(), static_cast<uint32_t>(pending.bytes->size()), pending.offset});
     }
+    auto written = io_->write_batch(table.fd, writes.data(), writes.size());
+    if (!written)
+    {
+        throw std::runtime_error(written.error().error_message);
+    }
+
+    // Block metadata lands after the payloads it points at, the header last.
+    writes.clear();
     for (uint32_t id = 0; id < table.blocks.size(); ++id)
     {
         if (id < table.block_dirty.size() && table.block_dirty[id])
         {
-            auto written = io_->write_at(table.fd, &table.blocks[id], sizeof(BlockMeta), block_file_offset(id));
-            if (!written)
-            {
-                throw std::runtime_error(written.error().error_message);
-            }
-            table.block_dirty[id] = 0;
+            writes.push_back({&table.blocks[id], sizeof(BlockMeta), block_file_offset(id)});
         }
     }
     if (table.txn_gen != 0)
     {
         table.header.committed_gen = table.txn_gen;
     }
-    auto header = write_header(table);
-    if (!header)
+    alignas(FileHeader) char header_buf[FILE_HEADER_SIZE];
+    std::memset(header_buf, 0, sizeof(header_buf));
+    std::memcpy(header_buf, &table.header, sizeof(FileHeader));
+    writes.push_back({header_buf, FILE_HEADER_SIZE, 0});
+    written = io_->write_batch(table.fd, writes.data(), writes.size());
+    if (!written)
     {
-        throw std::runtime_error(header.error().error_message);
+        throw std::runtime_error(written.error().error_message);
+    }
+    for (uint32_t id = 0; id < table.blocks.size(); ++id)
+    {
+        if (id < table.block_dirty.size() && table.block_dirty[id])
+        {
+            table.block_dirty[id] = 0;
+        }
     }
     for (const auto & [pid, loc] : table.overlay)
     {
@@ -1295,7 +1303,7 @@ void DiskManager::maybe_gc(TableState & table)
     }
 }
 
-neon::base::Result<void> DiskManager::gc_table(TableState & table)
+popo::base::Result<void> DiskManager::gc_table(TableState & table)
 {
     struct Live
     {
@@ -1396,4 +1404,4 @@ neon::base::Result<void> DiskManager::gc_table(TableState & table)
     return {};
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

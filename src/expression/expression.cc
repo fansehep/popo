@@ -2,7 +2,7 @@
 #include <stdexcept>
 #include "src/base/error.h"
 
-namespace neon::expression
+namespace popo::expression
 {
 
 // Expression基类不需要实现，因为它是纯虚类
@@ -17,13 +17,13 @@ std::pair<bool, Value> LiteralExpression::evaluate(const Row & row)
     return std::make_pair(true, value_);
 }
 
-neon::type::ValueType LiteralExpression::get_type() const
+popo::type::ValueType LiteralExpression::get_type() const
 {
     return value_.datatype();
 }
 
 // ColumnExpression实现
-ColumnExpression::ColumnExpression(size_t column_index, neon::type::ValueType type) : column_index_(column_index), type_(type)
+ColumnExpression::ColumnExpression(size_t column_index, popo::type::ValueType type) : column_index_(column_index), type_(type)
 {
 }
 
@@ -38,7 +38,7 @@ std::pair<bool, Value> ColumnExpression::evaluate(const Row & row)
     return std::make_pair(true, row.values_[column_index_]);
 }
 
-neon::type::ValueType ColumnExpression::get_type() const
+popo::type::ValueType ColumnExpression::get_type() const
 {
     return type_;
 }
@@ -48,10 +48,10 @@ BinaryExpression::BinaryExpression(ExpressionRef left, ExpressionRef right) : le
 {
 }
 
-neon::type::ValueType BinaryExpression::get_type() const
+popo::type::ValueType BinaryExpression::get_type() const
 {
     // 默认返回布尔类型，具体子类可以覆盖
-    return neon::type::ValueType::Bool;
+    return popo::type::ValueType::Bool;
 }
 
 // ComparisonExpression实现
@@ -108,12 +108,12 @@ std::pair<bool, Value> ComparisonExpression::evaluate(const Row & row)
             break;
     }
 
-    return std::make_pair(true, Value(neon::type::ValueType::Bool, result));
+    return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
 }
 
-neon::type::ValueType ComparisonExpression::get_type() const
+popo::type::ValueType ComparisonExpression::get_type() const
 {
-    return neon::type::ValueType::Bool;
+    return popo::type::ValueType::Bool;
 }
 
 // ArithmeticExpression实现
@@ -147,7 +147,7 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
     }
 
     // 确定结果类型（取精度较高的类型）
-    neon::type::ValueType result_type = left_value.datatype();
+    popo::type::ValueType result_type = left_value.datatype();
     if (right_value.datatype() > result_type)
     {
         result_type = right_value.datatype();
@@ -157,22 +157,22 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
     switch (type_)
     {
         case ArithmeticType::ADD: {
-            if (result_type == neon::type::ValueType::Int32)
+            if (result_type == popo::type::ValueType::Int32)
             {
                 int32_t result = left_value.i32() + right_value.i32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Int64)
+            else if (result_type == popo::type::ValueType::Int64)
             {
                 int64_t result = left_value.i64() + right_value.i64();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float32)
+            else if (result_type == popo::type::ValueType::Float32)
             {
                 float result = left_value.f32() + right_value.f32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float64)
+            else if (result_type == popo::type::ValueType::Float64)
             {
                 double result = left_value.f64() + right_value.f64();
                 return std::make_pair(true, Value(result_type, result));
@@ -180,22 +180,22 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
             break;
         }
         case ArithmeticType::SUBTRACT: {
-            if (result_type == neon::type::ValueType::Int32)
+            if (result_type == popo::type::ValueType::Int32)
             {
                 int32_t result = left_value.i32() - right_value.i32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Int64)
+            else if (result_type == popo::type::ValueType::Int64)
             {
                 int64_t result = left_value.i64() - right_value.i64();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float32)
+            else if (result_type == popo::type::ValueType::Float32)
             {
                 float result = left_value.f32() - right_value.f32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float64)
+            else if (result_type == popo::type::ValueType::Float64)
             {
                 double result = left_value.f64() - right_value.f64();
                 return std::make_pair(true, Value(result_type, result));
@@ -203,22 +203,22 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
             break;
         }
         case ArithmeticType::MULTIPLY: {
-            if (result_type == neon::type::ValueType::Int32)
+            if (result_type == popo::type::ValueType::Int32)
             {
                 int32_t result = left_value.i32() * right_value.i32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Int64)
+            else if (result_type == popo::type::ValueType::Int64)
             {
                 int64_t result = left_value.i64() * right_value.i64();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float32)
+            else if (result_type == popo::type::ValueType::Float32)
             {
                 float result = left_value.f32() * right_value.f32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float64)
+            else if (result_type == popo::type::ValueType::Float64)
             {
                 double result = left_value.f64() * right_value.f64();
                 return std::make_pair(true, Value(result_type, result));
@@ -226,7 +226,7 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
             break;
         }
         case ArithmeticType::DIVIDE: {
-            if (result_type == neon::type::ValueType::Int32)
+            if (result_type == popo::type::ValueType::Int32)
             {
                 if (right_value.i32() == 0)
                 {
@@ -235,7 +235,7 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
                 int32_t result = left_value.i32() / right_value.i32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Int64)
+            else if (result_type == popo::type::ValueType::Int64)
             {
                 if (right_value.i64() == 0)
                 {
@@ -244,7 +244,7 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
                 int64_t result = left_value.i64() / right_value.i64();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float32)
+            else if (result_type == popo::type::ValueType::Float32)
             {
                 if (right_value.f32() == 0.0f)
                 {
@@ -253,7 +253,7 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
                 float result = left_value.f32() / right_value.f32();
                 return std::make_pair(true, Value(result_type, result));
             }
-            else if (result_type == neon::type::ValueType::Float64)
+            else if (result_type == popo::type::ValueType::Float64)
             {
                 if (right_value.f64() == 0.0)
                 {
@@ -269,10 +269,10 @@ std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
     return std::make_pair(false, Value());
 }
 
-neon::type::ValueType ArithmeticExpression::get_type() const
+popo::type::ValueType ArithmeticExpression::get_type() const
 {
     // 返回数值类型
-    return neon::type::ValueType::Int64; // 简化处理，实际应根据操作数类型确定
+    return popo::type::ValueType::Int64; // 简化处理，实际应根据操作数类型确定
 }
 
 // LogicalExpression实现
@@ -300,7 +300,7 @@ std::pair<bool, Value> LogicalExpression::evaluate(const Row & row)
         }
 
         // 检查操作数是否为布尔类型
-        if (left_result.second.datatype() != neon::type::ValueType::Bool || right_result.second.datatype() != neon::type::ValueType::Bool)
+        if (left_result.second.datatype() != popo::type::ValueType::Bool || right_result.second.datatype() != popo::type::ValueType::Bool)
         {
             return std::make_pair(false, Value());
         }
@@ -321,7 +321,7 @@ std::pair<bool, Value> LogicalExpression::evaluate(const Row & row)
                 return std::make_pair(false, Value());
         }
 
-        return std::make_pair(true, Value(neon::type::ValueType::Bool, result));
+        return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
     }
     else
     {
@@ -330,9 +330,9 @@ std::pair<bool, Value> LogicalExpression::evaluate(const Row & row)
     }
 }
 
-neon::type::ValueType LogicalExpression::get_type() const
+popo::type::ValueType LogicalExpression::get_type() const
 {
-    return neon::type::ValueType::Bool;
+    return popo::type::ValueType::Bool;
 }
 
 // UnaryExpression实现
@@ -340,9 +340,9 @@ UnaryExpression::UnaryExpression(ExpressionRef operand) : operand_(std::move(ope
 {
 }
 
-neon::type::ValueType UnaryExpression::get_type() const
+popo::type::ValueType UnaryExpression::get_type() const
 {
-    return neon::type::ValueType::Bool;
+    return popo::type::ValueType::Bool;
 }
 
 // NotExpression实现
@@ -359,7 +359,7 @@ std::pair<bool, Value> NotExpression::evaluate(const Row & row)
     }
 
     // 检查操作数是否为布尔类型
-    if (operand_result.second.datatype() != neon::type::ValueType::Bool)
+    if (operand_result.second.datatype() != popo::type::ValueType::Bool)
     {
         return std::make_pair(false, Value());
     }
@@ -367,12 +367,12 @@ std::pair<bool, Value> NotExpression::evaluate(const Row & row)
     bool operand_bool = operand_result.second.boolean();
     bool result = !operand_bool;
 
-    return std::make_pair(true, Value(neon::type::ValueType::Bool, result));
+    return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
 }
 
-neon::type::ValueType NotExpression::get_type() const
+popo::type::ValueType NotExpression::get_type() const
 {
-    return neon::type::ValueType::Bool;
+    return popo::type::ValueType::Bool;
 }
 
-} // namespace neon::expression
+} // namespace popo::expression

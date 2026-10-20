@@ -5,13 +5,13 @@
 #include "src/base/error.h"
 
 
-namespace neon::catalog
+namespace popo::catalog
 {
 
-using neon::base::Errno;
-using neon::base::Error;
+using popo::base::Errno;
+using popo::base::Error;
 
-neon::base::Result<SchemaId> SchemaManager::create_table(const std::string & table_name, const std::vector<Column> & columns)
+popo::base::Result<SchemaId> SchemaManager::create_table(const std::string & table_name, const std::vector<Column> & columns)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -42,7 +42,7 @@ neon::base::Result<SchemaId> SchemaManager::create_table(const std::string & tab
     return schema->id_;
 }
 
-neon::base::Result<void> SchemaManager::delete_table(const std::string & table_name)
+popo::base::Result<void> SchemaManager::delete_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -58,7 +58,7 @@ neon::base::Result<void> SchemaManager::delete_table(const std::string & table_n
     return {};
 }
 
-neon::base::Result<SchemaRef> SchemaManager::query_table(const std::string & table_name)
+popo::base::Result<SchemaRef> SchemaManager::query_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -72,7 +72,7 @@ neon::base::Result<SchemaRef> SchemaManager::query_table(const std::string & tab
     return it->second;
 }
 
-neon::base::Result<void> SchemaManager::modify_table(const std::string & table_name, const std::vector<Column> & new_columns)
+popo::base::Result<void> SchemaManager::modify_table(const std::string & table_name, const std::vector<Column> & new_columns)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -97,7 +97,7 @@ neon::base::Result<void> SchemaManager::modify_table(const std::string & table_n
     return {};
 }
 
-neon::base::Result<void> SchemaManager::create_index(
+popo::base::Result<void> SchemaManager::create_index(
     const std::string & table_name, const std::string & index_name, const std::vector<int32_t> & index_cols, bool is_unique)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
@@ -138,7 +138,7 @@ neon::base::Result<void> SchemaManager::create_index(
     return {};
 }
 
-neon::base::Result<void> SchemaManager::delete_index(const std::string & table_name, const std::string & index_name)
+popo::base::Result<void> SchemaManager::delete_index(const std::string & table_name, const std::string & index_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -164,7 +164,7 @@ neon::base::Result<void> SchemaManager::delete_index(const std::string & table_n
     return {};
 }
 
-neon::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const std::string & table_name)
+popo::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
@@ -178,7 +178,7 @@ neon::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const s
     return it->second->indexes_;
 }
 
-neon::base::Result<void> SchemaManager::validate_columns(const std::vector<Column> & columns)
+popo::base::Result<void> SchemaManager::validate_columns(const std::vector<Column> & columns)
 {
     // 检查是否有重复的列名
     std::unordered_set<std::string> column_names;
@@ -227,4 +227,4 @@ int32_t SchemaManager::find_primary_key_column(const std::vector<Column> & colum
     return -1; // 没有找到主键
 }
 
-} // namespace neon::catalog
+} // namespace popo::catalog

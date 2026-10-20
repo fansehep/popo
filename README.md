@@ -1,9 +1,9 @@
-# Neon 数据库
+# PopoDB 数据库
 
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Neon** 是一个用现代 C++23 从零构建的轻量级关系型数据库，兼容 MySQL 有线协议（MySQL Wire Protocol），支持通过标准 MySQL 客户端（`mysql` CLI、JDBC 等）直接连接。
+**PopoDB** 是一个用现代 C++23 从零构建的轻量级关系型数据库，兼容 MySQL 有线协议（MySQL Wire Protocol），支持通过标准 MySQL 客户端（`mysql` CLI、JDBC 等）直接连接。
 
 ---
 
@@ -22,15 +22,15 @@
 
 ## 演示
 
-在终端中通过 MySQL 客户端连接 Neon，执行建表、插入、查询、聚合、更新、删除全流程：
+在终端中通过 MySQL 客户端连接 PopoDB，执行建表、插入、查询、聚合、更新、删除全流程：
 
-![Neon Demo](demo.svg)
+![PopoDB Demo](demo.svg)
 
 ---
 
 ## 架构
 
-![Neon architecture](architecture.png)
+![PopoDB architecture](architecture.png)
 
 ---
 
@@ -45,8 +45,8 @@
 ### 编译
 
 ```bash
-git clone https://github.com/your/neon.git
-cd neon
+git clone https://github.com/your/popodb.git
+cd popodb
 mkdir -p build2 && cd build2
 cmake .. -DCMAKE_BUILD_TYPE=Release
 cmake --build . -j$(nproc)
@@ -55,13 +55,13 @@ cmake --build . -j$(nproc)
 ### 启动服务
 
 ```bash
-./neon-server
+./popodb-server
 # 默认监听 127.0.0.1:3307
 ```
 
 自定义端口：
 ```bash
-./neon-server 13306
+./popodb-server 13306
 ```
 
 ### 连接

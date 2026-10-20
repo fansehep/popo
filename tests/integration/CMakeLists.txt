@@ -1,4 +1,4 @@
-# Integration tests: compare Neon SQL results with MySQL 8.0
+# Integration tests: compare PopoDB SQL results with MySQL 8.0
 add_executable(sql_integration_test sql_integration_test.cc)
 
 target_include_directories(sql_integration_test PRIVATE /usr/include/mysql /usr/include/mysql/mysql)

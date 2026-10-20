@@ -14,36 +14,36 @@
 #include "src/type/tuple.h"
 #include "src/type/value.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 namespace
 {
 
 // ---- Test helpers ----
 
-neon::catalog::Schema make_users_schema()
+popo::catalog::Schema make_users_schema()
 {
-    neon::catalog::Schema schema;
+    popo::catalog::Schema schema;
     schema.id_ = 1;
     schema.table_name_ = "users";
     schema.primary_key_col_idx_ = 0;
 
-    neon::catalog::Column id_col;
+    popo::catalog::Column id_col;
     id_col.column_name_ = "id";
-    id_col.data_type_ = neon::type::ValueType::Int32;
+    id_col.data_type_ = popo::type::ValueType::Int32;
     id_col.is_primary_key_ = true;
     id_col.is_nullable_ = false;
     schema.columns_.push_back(id_col);
 
-    neon::catalog::Column name_col;
+    popo::catalog::Column name_col;
     name_col.column_name_ = "name";
-    name_col.data_type_ = neon::type::ValueType::String;
+    name_col.data_type_ = popo::type::ValueType::String;
     name_col.is_nullable_ = true;
     schema.columns_.push_back(name_col);
 
-    neon::catalog::Column age_col;
+    popo::catalog::Column age_col;
     age_col.column_name_ = "age";
-    age_col.data_type_ = neon::type::ValueType::Int32;
+    age_col.data_type_ = popo::type::ValueType::Int32;
     age_col.is_nullable_ = true;
     schema.columns_.push_back(age_col);
 
@@ -51,7 +51,7 @@ neon::catalog::Schema make_users_schema()
 }
 
 // Helper: make Const opcodes, pushing value onto stack
-void emit_const(Program & prog, neon::type::Value v)
+void emit_const(Program & prog, popo::type::Value v)
 {
     int32_t idx = prog.add_constant(v);
     prog.emit(OpCode::Const, idx);
@@ -65,22 +65,22 @@ void emit_string_const(Program & prog, const std::string & s)
 
 void emit_int(Program & prog, int32_t v)
 {
-    emit_const(prog, neon::type::Value(neon::type::ValueType::Int32, v));
+    emit_const(prog, popo::type::Value(popo::type::ValueType::Int32, v));
 }
 
 void emit_bool(Program & prog, bool v)
 {
-    emit_const(prog, neon::type::Value(neon::type::ValueType::Bool, v));
+    emit_const(prog, popo::type::Value(popo::type::ValueType::Bool, v));
 }
 
 void emit_string(Program & prog, const std::string & s)
 {
-    emit_const(prog, neon::type::Value(neon::type::ValueType::String, s));
+    emit_const(prog, popo::type::Value(popo::type::ValueType::String, s));
 }
 
 void emit_float(Program & prog, double v)
 {
-    emit_const(prog, neon::type::Value(neon::type::ValueType::Float64, v));
+    emit_const(prog, popo::type::Value(popo::type::ValueType::Float64, v));
 }
 
 } // anonymous namespace
@@ -89,18 +89,18 @@ class VMTest : public ::testing::Test
 {
 protected:
     std::string test_dir_;
-    std::unique_ptr<neon::catalog::SchemaManager> schema_mgr_;
-    std::unique_ptr<neon::storage::StorageEngine> engine_;
+    std::unique_ptr<popo::catalog::SchemaManager> schema_mgr_;
+    std::unique_ptr<popo::storage::StorageEngine> engine_;
     std::unique_ptr<VirtualMachine> vm_;
 
     void SetUp() override
     {
         std::random_device rd;
-        test_dir_ = std::filesystem::temp_directory_path().string() + "/neon_vm_test_" + std::to_string(rd());
+        test_dir_ = std::filesystem::temp_directory_path().string() + "/popo_vm_test_" + std::to_string(rd());
         std::filesystem::create_directories(test_dir_);
 
-        schema_mgr_ = std::make_unique<neon::catalog::SchemaManager>();
-        engine_ = std::make_unique<neon::storage::StorageEngine>(test_dir_, 64);
+        schema_mgr_ = std::make_unique<popo::catalog::SchemaManager>();
+        engine_ = std::make_unique<popo::storage::StorageEngine>(test_dir_, 64);
         engine_->init();
 
         vm_ = std::make_unique<VirtualMachine>(*schema_mgr_, *engine_);
@@ -505,7 +505,7 @@ TEST_F(VMTest, ExecuteLoopWithJump)
     emit_int(prog, 1); // 1: push 1
     prog.emit(OpCode::Add); // 2: counter += 1 (Int64)
     prog.emit(OpCode::Dup); // 3: dup counter
-    emit_const(prog, neon::type::Value(neon::type::ValueType::Int64, static_cast<int64_t>(5))); // 4: push Int64(5)
+    emit_const(prog, popo::type::Value(popo::type::ValueType::Int64, static_cast<int64_t>(5))); // 4: push Int64(5)
     prog.emit(OpCode::Lt); // 5: counter < 5 ?
     prog.emit(OpCode::JumpIfTrue, 1); // 6: jump back to loop_start
 
@@ -553,10 +553,10 @@ TEST_F(VMTest, E2ECreateInsertScan)
     // 1. Create table
     Program create_prog;
     int32_t name_idx = create_prog.add_string_constant("test_tbl");
-    std::vector<neon::parser::ColumnDef> cols;
-    neon::parser::ColumnDef id_col;
+    std::vector<popo::parser::ColumnDef> cols;
+    popo::parser::ColumnDef id_col;
     id_col.name = "id";
-    id_col.data_type = neon::type::ValueType::Int32;
+    id_col.data_type = popo::type::ValueType::Int32;
     id_col.is_primary_key = true;
     cols.push_back(id_col);
     int32_t cols_idx = create_prog.add_column_defs(cols);
@@ -1047,4 +1047,4 @@ TEST_F(VMTest, ResultColumnsPropagated)
     EXPECT_EQ(result->columns[0], "my_col");
 }
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

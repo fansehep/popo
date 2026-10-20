@@ -5,9 +5,9 @@
 #include "src/type/tuple.h"
 #include "src/type/value.h"
 
-using namespace neon::storage;
-using namespace neon::type;
-using namespace neon::catalog;
+using namespace popo::storage;
+using namespace popo::type;
+using namespace popo::catalog;
 
 namespace
 {

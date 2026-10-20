@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "src/type/value.h"
 
-namespace neon::type
+namespace popo::type
 {
 
 class ValueTest : public ::testing::Test
@@ -61,4 +61,4 @@ TEST_F(ValueTest, ComparisonTest)
     EXPECT_TRUE(val1 == val3);
 }
 
-} // namespace neon::type
+} // namespace popo::type

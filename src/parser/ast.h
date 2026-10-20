@@ -7,7 +7,7 @@
 #include <vector>
 #include "type/value.h"
 
-namespace neon::parser
+namespace popo::parser
 {
 
 // Forward declarations
@@ -67,7 +67,7 @@ struct Expr
 
 struct LiteralExpr : Expr
 {
-    neon::type::Value value;
+    popo::type::Value value;
     LiteralExpr() { type = ExprType::Literal; }
 };
 
@@ -159,12 +159,12 @@ struct JoinTableRef : TableRef
 struct ColumnDef
 {
     std::string name;
-    neon::type::ValueType data_type;
+    popo::type::ValueType data_type;
     int32_t type_len = 0;
     bool is_primary_key = false;
     bool is_nullable = true;
     bool is_unique = false;
-    std::optional<neon::type::Value> default_value;
+    std::optional<popo::type::Value> default_value;
 };
 
 // Update assignment: SET col = expr
@@ -303,4 +303,4 @@ struct SelectSystemVarStatement : Statement
     SelectSystemVarStatement() { type = StmtType::SelectSystemVar; }
 };
 
-} // namespace neon::parser
+} // namespace popo::parser

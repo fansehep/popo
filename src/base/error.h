@@ -5,7 +5,7 @@
 #include <string>
 #include <stdint.h>
 
-namespace neon::base
+namespace popo::base
 {
 
 struct Error
@@ -37,12 +37,12 @@ enum Errno : int32_t
     InvalidColumnDefinition,
 };
 
-// Convenience alias for std::expected<T, neon::base::Error>
+// Convenience alias for std::expected<T, popo::base::Error>
 template <typename T>
-using Result = std::expected<T, neon::base::Error>;
+using Result = std::expected<T, popo::base::Error>;
 
-} // namespace neon::base
+} // namespace popo::base
 
 // Convenience helper: creates a std::unexpected<Error> with file/line info
 #define NewErr(errno, err_msg, ...) \
-    std::unexpected(neon::base::Error(errno, std::format("[{}:{}]" err_msg "", __FILE__, __LINE__, ##__VA_ARGS__)))
+    std::unexpected(popo::base::Error(errno, std::format("[{}:{}]" err_msg "", __FILE__, __LINE__, ##__VA_ARGS__)))

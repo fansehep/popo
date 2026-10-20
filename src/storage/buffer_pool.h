@@ -13,7 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // Composite key for buffer pool: (table_name, page_id)
@@ -121,4 +121,4 @@ private:
     std::optional<frame_id_t> get_free_frame();
 };
 
-} // namespace neon::storage
+} // namespace popo::storage

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "src/storage/common.h"
 
-namespace neon::storage
+namespace popo::storage
 {
 
 // On-disk table file:
@@ -22,7 +22,7 @@ constexpr uint32_t BLOCK_SIZE = 1u << 20;
 constexpr uint32_t FILE_HEADER_SIZE = 4096;
 constexpr uint32_t BLOCK_META_SIZE = 4096;
 constexpr uint32_t MAX_PAGES_PER_BLOCK = 48;
-constexpr uint32_t FILE_MAGIC = 0x4E454F4Eu; // 'NEON'
+constexpr uint32_t FILE_MAGIC = 0x4F504F50u; // 'POPO'
 constexpr uint32_t BLOCK_MAGIC = 0x314B4C42u; // 'BLK1'
 constexpr uint32_t FILE_VERSION = 1;
 constexpr uint32_t NO_BLOCK = UINT32_MAX;
@@ -82,4 +82,4 @@ inline uint64_t block_file_offset(uint32_t block_id)
     return static_cast<uint64_t>(FILE_HEADER_SIZE) + static_cast<uint64_t>(block_id) * BLOCK_SIZE;
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

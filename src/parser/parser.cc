@@ -5,7 +5,7 @@
 #include <memory>
 #include <stdexcept>
 
-namespace neon::parser
+namespace popo::parser
 {
 
 namespace
@@ -80,7 +80,7 @@ bool Parser::is_at_end() const
 
 // Main parse entry point
 
-neon::base::Result<std::vector<StmtPtr>> Parser::parse(const std::string & sql)
+popo::base::Result<std::vector<StmtPtr>> Parser::parse(const std::string & sql)
 {
     try
     {
@@ -883,7 +883,7 @@ ColumnDef Parser::parse_column_def()
     return def;
 }
 
-neon::type::ValueType Parser::parse_data_type(int32_t & type_len)
+popo::type::ValueType Parser::parse_data_type(int32_t & type_len)
 {
     if (match(TokenType::Int) || match(TokenType::Integer_))
     {
@@ -991,4 +991,4 @@ StmtPtr Parser::parse_select_system_var()
     return stmt;
 }
 
-} // namespace neon::parser
+} // namespace popo::parser

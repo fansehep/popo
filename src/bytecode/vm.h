@@ -13,12 +13,12 @@
 #include "type/tuple.h"
 #include "type/value.h"
 
-namespace neon::bytecode
+namespace popo::bytecode
 {
 
 struct ExecuteSuccess
 {
-    std::vector<std::shared_ptr<neon::type::Row>> rows;
+    std::vector<std::shared_ptr<popo::type::Row>> rows;
     std::vector<std::string> columns;
     std::string message;
     int64_t rows_affected = 0;
@@ -27,38 +27,38 @@ struct ExecuteSuccess
 class VirtualMachine
 {
 public:
-    VirtualMachine(neon::catalog::SchemaManager & schema_mgr, neon::storage::StorageEngine & engine);
+    VirtualMachine(popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine);
 
     // outer_txn == nullptr: this call begins and commits one transaction.
     // Otherwise the caller owns the transaction and commits or aborts it.
-    neon::base::Result<ExecuteSuccess> execute(const Program & program, neon::txn::Transaction * outer_txn = nullptr);
+    popo::base::Result<ExecuteSuccess> execute(const Program & program, popo::txn::Transaction * outer_txn = nullptr);
 
 private:
-    neon::catalog::SchemaManager & schema_mgr_;
-    neon::storage::StorageEngine & engine_;
-    neon::txn::Transaction * txn_ = nullptr;
+    popo::catalog::SchemaManager & schema_mgr_;
+    popo::storage::StorageEngine & engine_;
+    popo::txn::Transaction * txn_ = nullptr;
     bool own_txn_ = true;
 
     // Execution state
-    std::vector<neon::type::Value> stack_;
+    std::vector<popo::type::Value> stack_;
     int32_t pc_ = 0;
 
     // Cursor management
     struct Cursor
     {
         std::string table_name;
-        neon::storage::TableHeap * heap = nullptr;
-        std::unique_ptr<neon::storage::TableIterator> iter;
-        neon::catalog::Schema schema;
+        popo::storage::TableHeap * heap = nullptr;
+        std::unique_ptr<popo::storage::TableIterator> iter;
+        popo::catalog::Schema schema;
         bool is_write = false;
         // For tracking current row during iteration
-        neon::storage::RowId current_rid;
-        neon::type::Row current_row_cache;
+        popo::storage::RowId current_rid;
+        popo::type::Row current_row_cache;
         bool has_current = false;
         bool row_materialized = false;
         bool index_scan = false;
         size_t index_pos = 0;
-        std::vector<neon::storage::RowId> index_hits;
+        std::vector<popo::storage::RowId> index_hits;
     };
     std::unordered_map<int32_t, Cursor> cursors_;
 
@@ -70,7 +70,7 @@ private:
     };
     struct Sorter
     {
-        std::vector<std::shared_ptr<neon::type::Row>> rows;
+        std::vector<std::shared_ptr<popo::type::Row>> rows;
         std::vector<SortKey> sort_keys;
         int32_t current_row = -1;
     };
@@ -80,20 +80,20 @@ private:
     struct AggState
     {
         int32_t func_type = 0;
-        neon::type::Value result;
+        popo::type::Value result;
         int64_t count = 0;
         bool initialized = false;
     };
     std::vector<AggState> agg_states_;
 
     // Pending row for MakeRow/InsertRow
-    std::optional<neon::type::Row> pending_row_;
+    std::optional<popo::type::Row> pending_row_;
 
     // Result collection
     ExecuteSuccess result_;
 
     // Helper: abort txn and return unexpected error
-    auto error(const neon::base::Error & err)
+    auto error(const popo::base::Error & err)
     {
         if (txn_)
         {
@@ -107,12 +107,12 @@ private:
     }
 
     // Stack operations
-    void push(const neon::type::Value & val);
-    neon::type::Value pop();
-    const neon::type::Value & peek() const;
+    void push(const popo::type::Value & val);
+    popo::type::Value pop();
+    const popo::type::Value & peek() const;
 
     // Reset state for new execution
     void reset();
 };
 
-} // namespace neon::bytecode
+} // namespace popo::bytecode

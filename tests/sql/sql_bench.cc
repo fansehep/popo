@@ -69,11 +69,11 @@ int main()
     constexpr int kUpdates = 20;
 
     std::random_device rd;
-    auto dir = std::filesystem::temp_directory_path() / ("neon_sql_bench_" + std::to_string(rd()));
+    auto dir = std::filesystem::temp_directory_path() / ("popo_sql_bench_" + std::to_string(rd()));
     std::filesystem::create_directories(dir);
     spdlog::set_level(spdlog::level::warn);
 
-    neon::test::SqlRunner runner(dir.string());
+    popo::test::SqlRunner runner(dir.string());
     std::vector<Sample> samples;
 
     auto created = runner.exec("CREATE TABLE bench (id INT PRIMARY KEY, name VARCHAR(32))");

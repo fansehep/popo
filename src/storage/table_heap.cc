@@ -3,20 +3,20 @@
 #include <cstring>
 #include <spdlog/spdlog.h>
 
-namespace neon::storage
+namespace popo::storage
 {
 
 namespace
 {
 
-bool is_null_value(const neon::type::Value & v)
+bool is_null_value(const popo::type::Value & v)
 {
-    return v.datatype() == neon::type::ValueType::Null;
+    return v.datatype() == popo::type::ValueType::Null;
 }
 
-int64_t read_i64(const neon::type::Value & v)
+int64_t read_i64(const popo::type::Value & v)
 {
-    using neon::type::ValueType;
+    using popo::type::ValueType;
     switch (v.datatype())
     {
         case ValueType::Uint8:
@@ -48,9 +48,9 @@ int64_t read_i64(const neon::type::Value & v)
     }
 }
 
-double read_f64(const neon::type::Value & v)
+double read_f64(const popo::type::Value & v)
 {
-    using neon::type::ValueType;
+    using popo::type::ValueType;
     switch (v.datatype())
     {
         case ValueType::Float32:
@@ -71,10 +71,10 @@ int cmp_i64(int64_t a, int64_t b)
     return 0;
 }
 
-uint64_t fold_value(const neon::type::Value & v)
+uint64_t fold_value(const popo::type::Value & v)
 {
     uint64_t x = static_cast<uint64_t>(v.datatype()) << 56;
-    if (v.datatype() == neon::type::ValueType::String)
+    if (v.datatype() == popo::type::ValueType::String)
     {
         uint64_t h = 1469598103934665603ull;
         for (unsigned char c : v.string_ref())
@@ -84,16 +84,16 @@ uint64_t fold_value(const neon::type::Value & v)
         }
         x ^= h;
     }
-    else if (v.datatype() != neon::type::ValueType::Null)
+    else if (v.datatype() != popo::type::ValueType::Null)
     {
         x ^= static_cast<uint64_t>(read_i64(v));
     }
     return x * 0x9E3779B185EBCA87ull;
 }
 
-neon::type::Value coerce_to(neon::type::ValueType type, const neon::type::Value & v)
+popo::type::Value coerce_to(popo::type::ValueType type, const popo::type::Value & v)
 {
-    using neon::type::ValueType;
+    using popo::type::ValueType;
     if (v.datatype() == type || v.datatype() == ValueType::Null || type == ValueType::String)
     {
         return v;
@@ -102,21 +102,21 @@ neon::type::Value coerce_to(neon::type::ValueType type, const neon::type::Value 
     switch (type)
     {
         case ValueType::Int8:
-            return neon::type::Value(type, static_cast<int8_t>(n));
+            return popo::type::Value(type, static_cast<int8_t>(n));
         case ValueType::Int16:
-            return neon::type::Value(type, static_cast<int16_t>(n));
+            return popo::type::Value(type, static_cast<int16_t>(n));
         case ValueType::Int32:
-            return neon::type::Value(type, static_cast<int32_t>(n));
+            return popo::type::Value(type, static_cast<int32_t>(n));
         case ValueType::Int64:
-            return neon::type::Value(type, n);
+            return popo::type::Value(type, n);
         case ValueType::Uint8:
-            return neon::type::Value(type, static_cast<uint8_t>(n));
+            return popo::type::Value(type, static_cast<uint8_t>(n));
         case ValueType::Uint16:
-            return neon::type::Value(type, static_cast<uint16_t>(n));
+            return popo::type::Value(type, static_cast<uint16_t>(n));
         case ValueType::Uint32:
-            return neon::type::Value(type, static_cast<uint32_t>(n));
+            return popo::type::Value(type, static_cast<uint32_t>(n));
         case ValueType::Uint64:
-            return neon::type::Value(type, static_cast<uint64_t>(n));
+            return popo::type::Value(type, static_cast<uint64_t>(n));
         default:
             return v;
     }
@@ -125,9 +125,9 @@ neon::type::Value coerce_to(neon::type::ValueType type, const neon::type::Value 
 // Column type comes from Schema. Each Value is only a payload at this boundary,
 // so the read switch follows the value's own tag (an Int64 literal and an Int32
 // column still compare as integers).
-int compare_as(neon::type::ValueType column_type, const neon::type::Value & a, const neon::type::Value & b)
+int compare_as(popo::type::ValueType column_type, const popo::type::Value & a, const popo::type::Value & b)
 {
-    using neon::type::ValueType;
+    using popo::type::ValueType;
     if (is_null_value(a) && is_null_value(b))
         return 0;
     if (is_null_value(a))
@@ -175,7 +175,7 @@ int compare_as(neon::type::ValueType column_type, const neon::type::Value & a, c
 // ============================================================================
 
 TableHeap::TableHeap(
-    const std::string & table_name, BufferPoolManager * buffer_pool, RedoLogManager * redo_log, const neon::catalog::Schema & schema)
+    const std::string & table_name, BufferPoolManager * buffer_pool, RedoLogManager * redo_log, const popo::catalog::Schema & schema)
     : table_name_(table_name), buffer_pool_(buffer_pool), redo_log_(redo_log), schema_(schema)
 {
 }
@@ -184,17 +184,17 @@ TableHeap::~TableHeap() = default;
 
 // --- Primary Key Helpers ---
 
-neon::type::Value TableHeap::extract_pk(const Tuple & tuple) const
+popo::type::Value TableHeap::extract_pk(const Tuple & tuple) const
 {
     return extract_pk_from_serialized(tuple.data(), tuple.size());
 }
 
-neon::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint16_t len) const
+popo::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint16_t len) const
 {
     int32_t pk_idx = schema_.primary_key_col_idx_;
     if (pk_idx < 0)
     {
-        return neon::type::Value();
+        return popo::type::Value();
     }
 
     // Fast path: extract a fixed-width PK column directly from serialized bytes
@@ -211,45 +211,45 @@ neon::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint1
             bool is_null = (data[sizeof(uint16_t)] >> 0) & 1;
             if (!is_null)
             {
-                neon::type::ValueType pk_type = schema_.columns_[0].data_type_;
+                popo::type::ValueType pk_type = schema_.columns_[0].data_type_;
                 const char * val_data = data + sizeof(uint16_t) + null_bitmap_bytes;
 
                 switch (pk_type)
                 {
-                    case neon::type::ValueType::Int32: {
+                    case popo::type::ValueType::Int32: {
                         int32_t v = 0;
                         std::memcpy(&v, val_data, 4);
-                        return neon::type::Value(neon::type::ValueType::Int32, v);
+                        return popo::type::Value(popo::type::ValueType::Int32, v);
                     }
-                    case neon::type::ValueType::Uint32: {
+                    case popo::type::ValueType::Uint32: {
                         uint32_t v = 0;
                         std::memcpy(&v, val_data, 4);
-                        return neon::type::Value(neon::type::ValueType::Uint32, v);
+                        return popo::type::Value(popo::type::ValueType::Uint32, v);
                     }
-                    case neon::type::ValueType::Int64: {
+                    case popo::type::ValueType::Int64: {
                         int64_t v = 0;
                         std::memcpy(&v, val_data, 8);
-                        return neon::type::Value(neon::type::ValueType::Int64, v);
+                        return popo::type::Value(popo::type::ValueType::Int64, v);
                     }
-                    case neon::type::ValueType::Uint64: {
+                    case popo::type::ValueType::Uint64: {
                         uint64_t v = 0;
                         std::memcpy(&v, val_data, 8);
-                        return neon::type::Value(neon::type::ValueType::Uint64, v);
+                        return popo::type::Value(popo::type::ValueType::Uint64, v);
                     }
-                    case neon::type::ValueType::Float64: {
+                    case popo::type::ValueType::Float64: {
                         double v = 0;
                         std::memcpy(&v, val_data, 8);
-                        return neon::type::Value(neon::type::ValueType::Float64, v);
+                        return popo::type::Value(popo::type::ValueType::Float64, v);
                     }
-                    case neon::type::ValueType::Int8: {
+                    case popo::type::ValueType::Int8: {
                         int8_t v = 0;
                         std::memcpy(&v, val_data, 1);
-                        return neon::type::Value(neon::type::ValueType::Int8, v);
+                        return popo::type::Value(popo::type::ValueType::Int8, v);
                     }
-                    case neon::type::ValueType::Int16: {
+                    case popo::type::ValueType::Int16: {
                         int16_t v = 0;
                         std::memcpy(&v, val_data, 2);
-                        return neon::type::Value(neon::type::ValueType::Int16, v);
+                        return popo::type::Value(popo::type::ValueType::Int16, v);
                     }
                     default:
                         break; // Fall through to full deserialize
@@ -262,12 +262,12 @@ neon::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint1
     auto row = RowSerializer::deserialize(data, len, schema_);
     if (pk_idx >= static_cast<int32_t>(row.values_.size()))
     {
-        return neon::type::Value();
+        return popo::type::Value();
     }
     return std::move(row.values_[pk_idx]);
 }
 
-int TableHeap::compare_pk(const neon::type::Value & a, const neon::type::Value & b) const
+int TableHeap::compare_pk(const popo::type::Value & a, const popo::type::Value & b) const
 {
     int32_t pk_idx = schema_.primary_key_col_idx_;
     if (pk_idx < 0 || pk_idx >= static_cast<int32_t>(schema_.columns_.size()))
@@ -307,19 +307,19 @@ int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, 
         uint32_t remain = len - (sizeof(uint16_t) + bitmap_bytes);
         switch (schema_.columns_[0].data_type_)
         {
-            case neon::type::ValueType::Int8:
+            case popo::type::ValueType::Int8:
                 if (remain < 1)
                     return false;
                 out = static_cast<int8_t>(payload[0]);
                 return true;
-            case neon::type::ValueType::Uint8:
-            case neon::type::ValueType::Char:
-            case neon::type::ValueType::Bool:
+            case popo::type::ValueType::Uint8:
+            case popo::type::ValueType::Char:
+            case popo::type::ValueType::Bool:
                 if (remain < 1)
                     return false;
                 out = static_cast<unsigned char>(payload[0]);
                 return true;
-            case neon::type::ValueType::Int16: {
+            case popo::type::ValueType::Int16: {
                 if (remain < 2)
                     return false;
                 int16_t v = 0;
@@ -327,7 +327,7 @@ int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, 
                 out = v;
                 return true;
             }
-            case neon::type::ValueType::Uint16: {
+            case popo::type::ValueType::Uint16: {
                 if (remain < 2)
                     return false;
                 uint16_t v = 0;
@@ -335,7 +335,7 @@ int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, 
                 out = v;
                 return true;
             }
-            case neon::type::ValueType::Int32: {
+            case popo::type::ValueType::Int32: {
                 if (remain < 4)
                     return false;
                 int32_t v = 0;
@@ -343,7 +343,7 @@ int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, 
                 out = v;
                 return true;
             }
-            case neon::type::ValueType::Uint32: {
+            case popo::type::ValueType::Uint32: {
                 if (remain < 4)
                     return false;
                 uint32_t v = 0;
@@ -351,8 +351,8 @@ int TableHeap::compare_tuple_pk(const char * a, uint16_t a_len, const char * b, 
                 out = v;
                 return true;
             }
-            case neon::type::ValueType::Int64:
-            case neon::type::ValueType::Uint64: {
+            case popo::type::ValueType::Int64:
+            case popo::type::ValueType::Uint64: {
                 if (remain < 8)
                     return false;
                 std::memcpy(&out, payload, 8);
@@ -424,9 +424,9 @@ page_id_t TableHeap::search_leaf_bytes(const char * data, uint16_t len, std::vec
     }
 }
 
-page_id_t TableHeap::search_leaf_with_path(const neon::type::Value & pk, std::vector<page_id_t> & path) const
+page_id_t TableHeap::search_leaf_with_path(const popo::type::Value & pk, std::vector<page_id_t> & path) const
 {
-    neon::type::Row key_row;
+    popo::type::Row key_row;
     int32_t ncols = static_cast<int32_t>(schema_.columns_.size());
     int32_t pk_idx = schema_.primary_key_col_idx_;
     key_row.reserve_values(static_cast<size_t>(ncols));
@@ -435,7 +435,7 @@ page_id_t TableHeap::search_leaf_with_path(const neon::type::Value & pk, std::ve
         if (i == pk_idx)
             key_row.append_value(pk);
         else
-            key_row.append_value(neon::type::Value());
+            key_row.append_value(popo::type::Value());
     }
     auto key = Tuple::form(schema_, key_row);
     return search_leaf_bytes(key.data(), key.size(), path);
@@ -577,7 +577,7 @@ void TableHeap::insert_internal_with_path(
     }
 }
 
-std::pair<slot_id_t, page_id_t> TableHeap::btree_insert(const char * data, uint16_t len, const neon::type::Value & pk)
+std::pair<slot_id_t, page_id_t> TableHeap::btree_insert(const char * data, uint16_t len, const popo::type::Value & pk)
 {
     // If no root, create first leaf as root
     if (root_page_id_ == INVALID_PAGE_ID)
@@ -722,7 +722,7 @@ std::pair<slot_id_t, page_id_t> TableHeap::btree_insert(const char * data, uint1
 
 // --- Public API ---
 
-RowId TableHeap::insert_row(neon::txn::Transaction * txn, const Tuple & tuple)
+RowId TableHeap::insert_row(popo::txn::Transaction * txn, const Tuple & tuple)
 {
     const auto & serialized = tuple.bytes();
     auto data_len = tuple.size();
@@ -801,7 +801,7 @@ RowId TableHeap::insert_row(neon::txn::Transaction * txn, const Tuple & tuple)
     return RowId{leaf_pid, slot};
 }
 
-bool TableHeap::delete_row(neon::txn::Transaction * txn, RowId rid)
+bool TableHeap::delete_row(popo::txn::Transaction * txn, RowId rid)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -849,7 +849,7 @@ bool TableHeap::delete_row(neon::txn::Transaction * txn, RowId rid)
     return true;
 }
 
-RowId TableHeap::update_row(neon::txn::Transaction * txn, RowId rid, const Tuple & tuple)
+RowId TableHeap::update_row(popo::txn::Transaction * txn, RowId rid, const Tuple & tuple)
 {
     const auto & serialized = tuple.bytes();
     auto data_len = tuple.size();
@@ -858,7 +858,7 @@ RowId TableHeap::update_row(neon::txn::Transaction * txn, RowId rid, const Tuple
     std::lock_guard<std::mutex> lock(mutex_);
 
     std::vector<char> old_data;
-    neon::type::Value old_pk;
+    popo::type::Value old_pk;
     {
         auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
         if (!guard.is_valid())
@@ -1097,7 +1097,7 @@ std::optional<Tuple> TableHeap::get_row(RowId rid) const
     return Tuple(std::vector<char>(data_ptr, data_ptr + len));
 }
 
-std::optional<neon::type::Value> TableHeap::read_column(RowId rid, int32_t column) const
+std::optional<popo::type::Value> TableHeap::read_column(RowId rid, int32_t column) const
 {
     auto guard = buffer_pool_->fetch_page(table_name_, rid.page_id);
     if (!guard.is_valid())
@@ -1113,7 +1113,7 @@ std::optional<neon::type::Value> TableHeap::read_column(RowId rid, int32_t colum
     return RowSerializer::read_column(data_ptr, len, schema_, column);
 }
 
-std::optional<RowId> TableHeap::lookup_pk(const neon::type::Value & pk) const
+std::optional<RowId> TableHeap::lookup_pk(const popo::type::Value & pk) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
@@ -1239,11 +1239,11 @@ TableIterator TableHeap::iter() const
 // TableIterator — B+Tree leaf page chain traversal
 // ============================================================================
 
-TableIterator::TableIterator(TableHeap * heap, const neon::catalog::Schema & schema) : heap_(heap), schema_(schema)
+TableIterator::TableIterator(TableHeap * heap, const popo::catalog::Schema & schema) : heap_(heap), schema_(schema)
 {
 }
 
-void TableIterator::seek_ge(const neon::type::Value & key)
+void TableIterator::seek_ge(const popo::type::Value & key)
 {
     std::vector<page_id_t> path;
     page_id_t leaf = heap_->search_leaf_with_path(key, path);
@@ -1358,7 +1358,7 @@ std::pair<const char *, uint32_t> TableIterator::current_bytes() const
     return {data_ptr, len};
 }
 
-neon::type::Row TableIterator::current_row() const
+popo::type::Row TableIterator::current_row() const
 {
     return current_tuple().deform(schema_);
 }
@@ -1416,8 +1416,8 @@ int TableHeap::compare_prefix(const char * a, uint16_t a_len, const char * b, ui
     int n = std::min(width, static_cast<int>(schema_.columns_.size()));
     for (int i = 0; i < n; ++i)
     {
-        const neon::type::Value & av = i < static_cast<int>(left.values_.size()) ? left.values_[i] : neon::type::Value();
-        const neon::type::Value & bv = i < static_cast<int>(right.values_.size()) ? right.values_[i] : neon::type::Value();
+        const popo::type::Value & av = i < static_cast<int>(left.values_.size()) ? left.values_[i] : popo::type::Value();
+        const popo::type::Value & bv = i < static_cast<int>(right.values_.size()) ? right.values_[i] : popo::type::Value();
         int cmp = compare_as(schema_.columns_[static_cast<size_t>(i)].data_type_, av, bv);
         if (cmp != 0)
         {
@@ -1447,7 +1447,7 @@ void TableHeap::ahi_build(page_id_t leaf) const
     }
 }
 
-void TableHeap::ahi_note(page_id_t leaf, slot_id_t slot, const neon::type::Value & pk) const
+void TableHeap::ahi_note(page_id_t leaf, slot_id_t slot, const popo::type::Value & pk) const
 {
     if (ahi_.observe(leaf))
     {
@@ -1464,26 +1464,26 @@ void TableHeap::clear_ahi()
     ahi_.clear();
 }
 
-bool TableHeap::insert_entry(const neon::type::Value & key, const neon::type::Value & pk)
+bool TableHeap::insert_entry(const popo::type::Value & key, const popo::type::Value & pk)
 {
     if (schema_.columns_.size() < 2)
     {
         return false;
     }
-    neon::type::Row row;
+    popo::type::Row row;
     row.append_value(coerce_to(schema_.columns_[0].data_type_, key));
     row.append_value(coerce_to(schema_.columns_[1].data_type_, pk));
     auto tuple = Tuple::form(schema_, row);
     return insert_row(nullptr, tuple).is_valid();
 }
 
-bool TableHeap::erase_entry(const neon::type::Value & key, const neon::type::Value & pk)
+bool TableHeap::erase_entry(const popo::type::Value & key, const popo::type::Value & pk)
 {
     if (schema_.columns_.size() < 2)
     {
         return false;
     }
-    neon::type::Row row;
+    popo::type::Row row;
     row.append_value(coerce_to(schema_.columns_[0].data_type_, key));
     row.append_value(coerce_to(schema_.columns_[1].data_type_, pk));
     auto tuple = Tuple::form(schema_, row);
@@ -1519,16 +1519,16 @@ bool TableHeap::erase_entry(const neon::type::Value & key, const neon::type::Val
     return false;
 }
 
-std::vector<neon::type::Value> TableHeap::lookup_prefix(const neon::type::Value & key) const
+std::vector<popo::type::Value> TableHeap::lookup_prefix(const popo::type::Value & key) const
 {
-    std::vector<neon::type::Value> found;
+    std::vector<popo::type::Value> found;
     if (schema_.columns_.empty() || root_page_id_ == INVALID_PAGE_ID)
     {
         return found;
     }
-    neon::type::Row probe_row;
+    popo::type::Row probe_row;
     probe_row.append_value(coerce_to(schema_.columns_[0].data_type_, key));
-    probe_row.append_value(neon::type::Value());
+    probe_row.append_value(popo::type::Value());
     auto probe = Tuple::form(schema_, probe_row);
 
     std::lock_guard<std::mutex> lock(mutex_);
@@ -1598,7 +1598,7 @@ void TableHeap::attach_index(std::string name, int32_t column, bool unique, std:
     indexes_.push_back(SecondaryIndex{std::move(name), column, unique, std::move(tree)});
 }
 
-std::vector<neon::type::Value> TableHeap::lookup_index(size_t ordinal, const neon::type::Value & key) const
+std::vector<popo::type::Value> TableHeap::lookup_index(size_t ordinal, const popo::type::Value & key) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (ordinal >= indexes_.size() || !indexes_[ordinal].tree)
@@ -1631,7 +1631,7 @@ void TableHeap::set_index_roots(const std::vector<page_id_t> & roots)
     }
 }
 
-bool TableHeap::sync_indexes_insert(const Tuple & tuple, const neon::type::Value & pk)
+bool TableHeap::sync_indexes_insert(const Tuple & tuple, const popo::type::Value & pk)
 {
     auto row = tuple.deform(schema_);
     std::vector<size_t> done;
@@ -1689,4 +1689,4 @@ void TableHeap::sync_indexes_update(const char * old_data, uint16_t old_len, con
     sync_indexes_insert(neu, extract_pk(neu));
 }
 
-} // namespace neon::storage
+} // namespace popo::storage

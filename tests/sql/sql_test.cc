@@ -15,9 +15,9 @@ protected:
     void SetUp() override
     {
         std::random_device rd;
-        dir_ = std::filesystem::temp_directory_path() / ("neon_sql_test_" + std::to_string(rd()));
+        dir_ = std::filesystem::temp_directory_path() / ("popo_sql_test_" + std::to_string(rd()));
         std::filesystem::create_directories(dir_);
-        runner_ = std::make_unique<neon::test::SqlRunner>(dir_.string());
+        runner_ = std::make_unique<popo::test::SqlRunner>(dir_.string());
     }
 
     void TearDown() override
@@ -26,7 +26,7 @@ protected:
         std::filesystem::remove_all(dir_);
     }
 
-    neon::test::SqlResult must(const std::string & sql)
+    popo::test::SqlResult must(const std::string & sql)
     {
         auto result = runner_->exec(sql);
         EXPECT_TRUE(result.ok) << sql << " -> " << result.error;
@@ -34,7 +34,7 @@ protected:
     }
 
     std::filesystem::path dir_;
-    std::unique_ptr<neon::test::SqlRunner> runner_;
+    std::unique_ptr<popo::test::SqlRunner> runner_;
 };
 
 TEST_F(SqlExecTest, CreateInsertSelect)

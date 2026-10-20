@@ -7,7 +7,7 @@
 #include "src/type/value.h"
 
 
-namespace neon::type
+namespace popo::type
 {
 
 
@@ -31,15 +31,15 @@ struct Row
 
     [[nodiscard]] auto len() const -> uint32_t { return values_.size(); }
 
-    auto value_ref(const uint32_t idx) -> neon::type::Value & { return values_[idx]; }
-    [[nodiscard]] auto value_ref(const uint32_t idx) const -> const neon::type::Value & { return values_[idx]; }
+    auto value_ref(const uint32_t idx) -> popo::type::Value & { return values_[idx]; }
+    [[nodiscard]] auto value_ref(const uint32_t idx) const -> const popo::type::Value & { return values_[idx]; }
 
-    auto append_value(const neon::type::Value & value) -> void { values_.push_back(value); }
-    auto append_value(neon::type::Value && value) -> void { values_.push_back(std::move(value)); }
+    auto append_value(const popo::type::Value & value) -> void { values_.push_back(value); }
+    auto append_value(popo::type::Value && value) -> void { values_.push_back(std::move(value)); }
 
     auto reserve_values(size_t n) -> void { values_.reserve(n); }
 
-    std::vector<neon::type::Value> values_;
+    std::vector<popo::type::Value> values_;
 
     Row() = default;
     Row(const Row &) = default;

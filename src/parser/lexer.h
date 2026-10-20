@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace neon::parser
+namespace popo::parser
 {
 
 enum class TokenType
@@ -139,4 +139,4 @@ private:
     TokenType keyword_lookup(const std::string & word);
 };
 
-} // namespace neon::parser
+} // namespace popo::parser

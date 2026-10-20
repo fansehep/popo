@@ -10,7 +10,7 @@
 #include "server/protocol.h"
 #include "src/storage/storage_engine.h"
 
-namespace neon::server
+namespace popo::server
 {
 
 class Session : public std::enable_shared_from_this<Session>
@@ -18,15 +18,15 @@ class Session : public std::enable_shared_from_this<Session>
 public:
     Session(
         asio::ip::tcp::socket socket,
-        neon::catalog::SchemaManager & schema_mgr,
-        neon::storage::StorageEngine & engine,
+        popo::catalog::SchemaManager & schema_mgr,
+        popo::storage::StorageEngine & engine,
         uint32_t connection_id);
     void start();
 
 private:
     asio::ip::tcp::socket socket_;
-    neon::catalog::SchemaManager & schema_mgr_;
-    neon::storage::StorageEngine & engine_;
+    popo::catalog::SchemaManager & schema_mgr_;
+    popo::storage::StorageEngine & engine_;
     uint32_t connection_id_;
     uint8_t seq_id_ = 0;
     std::vector<uint8_t> read_buffer_;
@@ -43,12 +43,12 @@ private:
     void send_packet(const std::vector<uint8_t> & packet);
     void send_ok(uint64_t affected_rows = 0, const std::string & msg = "");
     void send_error(uint16_t code, const std::string & msg);
-    void send_result_set(const neon::bytecode::ExecuteSuccess & result);
+    void send_result_set(const popo::bytecode::ExecuteSuccess & result);
 
     std::vector<uint8_t> read_bytes(size_t n);
-    MySQLColumnType value_type_to_mysql(neon::type::ValueType vt);
-    std::string value_to_string(const neon::type::Value & val);
-    uint32_t column_length_for_type(neon::type::ValueType vt);
+    MySQLColumnType value_type_to_mysql(popo::type::ValueType vt);
+    std::string value_to_string(const popo::type::Value & val);
+    uint32_t column_length_for_type(popo::type::ValueType vt);
 };
 
-} // namespace neon::server
+} // namespace popo::server

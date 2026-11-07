@@ -52,6 +52,7 @@ target_include_directories(
   PUBLIC
   type
   ${CMAKE_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/src
 )
 
 target_link_libraries(
@@ -116,6 +117,12 @@ add_library(bytecode_lib
 target_link_libraries(bytecode_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib storage_lib)
 target_include_directories(bytecode_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
+add_library(executor_lib
+    executor/executor.cc
+)
+target_link_libraries(executor_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib storage_lib)
+target_include_directories(executor_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
 # Storage library (includes transaction manager)
 # Table pages and the commit log are written through io_uring.
 find_library(POPO_URING NAMES uring REQUIRED)
@@ -139,7 +146,7 @@ add_library(server_lib
     server/session.cc
     server/server.cc
 )
-target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib storage_lib asio_lib spdlog)
+target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib executor_lib storage_lib asio_lib spdlog)
 target_include_directories(server_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # Add popodb-server executable

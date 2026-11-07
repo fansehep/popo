@@ -33,12 +33,16 @@ private:
     // Statement parsing
     StmtPtr parse_statement();
     StmtPtr parse_select();
+    void parse_select_core(const std::shared_ptr<SelectStatement> & stmt);
+    std::vector<CteDef> parse_with_clause();
+    StmtPtr parse_alter_table();
     StmtPtr parse_insert();
     StmtPtr parse_create_table();
     StmtPtr parse_create_index(bool unique);
     StmtPtr parse_update();
     StmtPtr parse_delete();
     StmtPtr parse_drop();
+    StmtPtr parse_create_view();
     StmtPtr parse_show();
     StmtPtr parse_describe();
     StmtPtr parse_set();
@@ -48,6 +52,7 @@ private:
     // SELECT clause parsing
     std::vector<ExprPtr> parse_select_list();
     TableRefPtr parse_table_ref();
+    TableRefPtr parse_table_primary();
     TableRefPtr parse_join(TableRefPtr left);
     ExprPtr parse_where();
     std::vector<ExprPtr> parse_group_by();
@@ -65,7 +70,11 @@ private:
     ExprPtr parse_multiplication();
     ExprPtr parse_unary();
     ExprPtr parse_primary();
+    ExprPtr parse_case_expr();
     ExprPtr parse_function_call(const std::string & name);
+    ExprPtr maybe_window(ExprPtr func);
+    ExprPtr parse_comparison_rhs(BinaryOpType op, const ExprPtr & left);
+    popo::type::ValueType parse_cast_target();
 
     // Type parsing for CREATE TABLE
     ColumnDef parse_column_def();

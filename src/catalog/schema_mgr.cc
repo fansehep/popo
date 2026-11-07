@@ -227,4 +227,37 @@ int32_t SchemaManager::find_primary_key_column(const std::vector<Column> & colum
     return -1; // 没有找到主键
 }
 
+popo::base::Result<void> SchemaManager::create_view(const std::string & name, popo::parser::StmtPtr query)
+{
+    std::lock_guard<std::mutex> lgd(this->mtx_);
+    if (schema_map_.contains(name) || views_.contains(name))
+    {
+        return std::unexpected(Error(Errno::TableAlreadyExists, "name already exists: " + name));
+    }
+    views_[name] = std::move(query);
+    return {};
+}
+
+popo::base::Result<void> SchemaManager::drop_view(const std::string & name)
+{
+    std::lock_guard<std::mutex> lgd(this->mtx_);
+    if (!views_.contains(name))
+    {
+        return std::unexpected(Error(Errno::TableNotFound, "view not found: " + name));
+    }
+    views_.erase(name);
+    return {};
+}
+
+popo::parser::StmtPtr SchemaManager::find_view(const std::string & name)
+{
+    std::lock_guard<std::mutex> lgd(this->mtx_);
+    auto it = views_.find(name);
+    if (it == views_.end())
+    {
+        return nullptr;
+    }
+    return it->second;
+}
+
 } // namespace popo::catalog

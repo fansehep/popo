@@ -1,5 +1,7 @@
 #pragma once
 #include <expected>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include "base/error.h"
 #include "catalog/schema_mgr.h"
@@ -18,8 +20,13 @@ public:
 
 private:
     popo::catalog::SchemaManager & schema_mgr_;
+    std::unordered_map<std::string, PlanNodePtr> cte_plans_;
+    std::unordered_map<std::string, bool> cte_recursive_;
+    std::unordered_set<std::string> expanding_views_;
 
     PlanNodePtr plan_select(const popo::parser::SelectStatement & stmt);
+    PlanNodePtr plan_select_body(const popo::parser::SelectStatement & stmt);
+    PlanNodePtr plan_alter_table(const popo::parser::AlterTableStatement & stmt);
     PlanNodePtr plan_insert(const popo::parser::InsertStatement & stmt);
     PlanNodePtr plan_create_table(const popo::parser::CreateTableStatement & stmt);
     PlanNodePtr plan_create_index(const popo::parser::CreateIndexStatement & stmt);
@@ -34,12 +41,17 @@ private:
     PlanNodePtr plan_show_status(const popo::parser::ShowStatusStatement & stmt);
     PlanNodePtr plan_select_database(const popo::parser::SelectDatabaseStatement & stmt);
     PlanNodePtr plan_select_system_var(const popo::parser::SelectSystemVarStatement & stmt);
+    PlanNodePtr plan_create_view(const popo::parser::CreateViewStatement & stmt);
+    PlanNodePtr plan_drop_view(const popo::parser::DropViewStatement & stmt);
 
     // Build the FROM clause into plan nodes (handles joins)
     PlanNodePtr plan_table_ref(const popo::parser::TableRefPtr & ref);
 
     // Resolve table columns for scan nodes
     void resolve_scan_columns(ScanNode & scan);
+
+    // Output column names of a plan (for CTE / derived table / UNION resolution)
+    static std::vector<std::string> plan_output_names(const PlanNodePtr & node);
 };
 
 } // namespace popo::planner

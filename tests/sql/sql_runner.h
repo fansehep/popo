@@ -9,6 +9,7 @@
 #include "src/bytecode/fast_path.h"
 #include "src/bytecode/vm.h"
 #include "src/catalog/schema_mgr.h"
+#include "src/executor/executor.h"
 #include "src/parser/parser.h"
 #include "src/planner/planner.h"
 #include "src/storage/storage_engine.h"
@@ -110,6 +111,21 @@ private:
                 {
                     out.error = plan.error().error_message;
                     return out;
+                }
+
+                if (popo::executor::needs_generic_executor(stmt) || popo::executor::plan_needs_generic_executor(*plan))
+                {
+                    popo::executor::Executor executor(schema_, engine_);
+                    auto executed = executor.execute(*plan, outer);
+                    auto tv1 = clock::now();
+                    out.vm_us += us(tv1 - tp1);
+                    if (!executed)
+                    {
+                        out.error = executed.error().error_message;
+                        return out;
+                    }
+                    out.result = std::move(*executed);
+                    continue;
                 }
 
                 auto compiled = compiler_.compile(*plan);

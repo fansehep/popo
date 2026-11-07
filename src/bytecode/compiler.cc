@@ -445,6 +445,8 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
                 case popo::parser::BinaryOpType::Or:
                     program_.emit(OpCode::Or);
                     break;
+                case popo::parser::BinaryOpType::Concat:
+                    throw std::runtime_error("|| is executed by the SQL interpreter");
             }
             break;
         }
@@ -888,6 +890,9 @@ int32_t Compiler::resolve_project_columns(const std::vector<popo::parser::ExprPt
                     break;
                 case popo::parser::AggFuncType::Max:
                     fn_name = "MAX";
+                    break;
+                case popo::parser::AggFuncType::XmlAgg:
+                    fn_name = "XMLAGG";
                     break;
             }
             if (!func.args.empty())

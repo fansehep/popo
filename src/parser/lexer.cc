@@ -198,6 +198,34 @@ TokenType Lexer::keyword_lookup(const std::string & word)
         {"min", TokenType::Min},
         {"max", TokenType::Max},
         {"distinct", TokenType::Distinct},
+        {"in", TokenType::In},
+        {"between", TokenType::Between},
+        {"like", TokenType::Like},
+        {"is", TokenType::Is},
+        {"case", TokenType::Case},
+        {"when", TokenType::When},
+        {"then", TokenType::Then},
+        {"else", TokenType::Else},
+        {"end", TokenType::End},
+        {"union", TokenType::Union},
+        {"intersect", TokenType::Intersect},
+        {"except", TokenType::Except},
+        {"all", TokenType::All},
+        {"any", TokenType::Any},
+        {"some", TokenType::Some},
+        {"full", TokenType::Full},
+        {"outer", TokenType::Outer},
+        {"recursive", TokenType::Recursive},
+        {"cast", TokenType::Cast},
+        {"over", TokenType::Over},
+        {"partition", TokenType::Partition},
+        {"view", TokenType::View},
+        {"offset", TokenType::Offset},
+        {"with", TokenType::With},
+        {"add", TokenType::Add},
+        {"column", TokenType::Column},
+        {"rename", TokenType::Rename},
+        {"to", TokenType::To},
         {"show", TokenType::Show},
         {"databases", TokenType::Databases},
         {"describe", TokenType::Describe},
@@ -309,6 +337,13 @@ std::vector<Token> Lexer::tokenize()
             advance();
             advance();
             tokens.push_back(Token{TokenType::Ge, ">=", start_line, start_col});
+            continue;
+        }
+        if (c == '|' && pos_ + 1 < input_.size() && input_[pos_ + 1] == '|')
+        {
+            advance();
+            advance();
+            tokens.push_back(Token{TokenType::Concat, "||", start_line, start_col});
             continue;
         }
 

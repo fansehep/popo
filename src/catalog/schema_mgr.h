@@ -7,6 +7,7 @@
 #include <vector>
 #include "src/base/error.h"
 #include "src/catalog/schema.h"
+#include "src/parser/ast.h"
 
 namespace popo::catalog
 {
@@ -68,6 +69,10 @@ public:
     /**
      @return: 所有已注册的表名
     */
+    popo::base::Result<void> create_view(const std::string & name, popo::parser::StmtPtr query);
+    popo::base::Result<void> drop_view(const std::string & name);
+    popo::parser::StmtPtr find_view(const std::string & name);
+
     std::vector<std::string> all_table_names() const
     {
         std::vector<std::string> names;
@@ -81,6 +86,7 @@ public:
 private:
     std::mutex mtx_;
     std::unordered_map<std::string, popo::catalog::SchemaRef> schema_map_;
+    std::unordered_map<std::string, popo::parser::StmtPtr> views_;
     SchemaId next_schema_id_ = 1; // 用于生成唯一的SchemaId
 
     // 辅助函数：验证列定义

@@ -114,6 +114,19 @@ popo::base::Result<std::vector<StmtPtr>> Parser::parse(const std::string & sql)
 
 StmtPtr Parser::parse_statement()
 {
+    if (match(TokenType::With))
+    {
+        bool recursive = match(TokenType::Recursive);
+        auto ctes = parse_with_clause();
+        for (auto & cte : ctes)
+        {
+            cte.recursive = recursive;
+        }
+        expect(TokenType::Select);
+        auto stmt = std::dynamic_pointer_cast<SelectStatement>(parse_select());
+        stmt->with_clause = std::move(ctes);
+        return stmt;
+    }
     if (match(TokenType::Select))
     {
         // Check for SELECT DATABASE()
@@ -142,6 +155,10 @@ StmtPtr Parser::parse_statement()
         {
             return parse_create_index(false);
         }
+        if (match(TokenType::View))
+        {
+            return parse_create_view();
+        }
         return parse_create_table();
     }
     if (match(TokenType::Update))
@@ -150,6 +167,8 @@ StmtPtr Parser::parse_statement()
         return parse_delete();
     if (match(TokenType::Drop))
         return parse_drop();
+    if (match(TokenType::Alter))
+        return parse_alter_table();
     if (match(TokenType::Show))
         return parse_show();
     if (match(TokenType::Desc) || match(TokenType::Describe))
@@ -162,10 +181,66 @@ StmtPtr Parser::parse_statement()
 StmtPtr Parser::parse_select()
 {
     auto stmt = std::make_shared<SelectStatement>();
+    parse_select_core(stmt);
+
+    while (check(TokenType::Union) || check(TokenType::Intersect) || check(TokenType::Except))
+    {
+        SetTerm term;
+        if (match(TokenType::Intersect))
+        {
+            term.kind = SetOpKind::Intersect;
+        }
+        else if (match(TokenType::Except))
+        {
+            term.kind = SetOpKind::Except;
+        }
+        else
+        {
+            expect(TokenType::Union);
+            term.kind = SetOpKind::Union;
+        }
+        term.is_all = match(TokenType::All);
+        expect(TokenType::Select);
+        term.query = std::make_shared<SelectStatement>();
+        parse_select_core(term.query);
+        stmt->set_ops.push_back(std::move(term));
+    }
+
+    if (match(TokenType::Order))
+    {
+        expect(TokenType::By);
+        stmt->order_by = parse_order_by();
+    }
+
+    if (match(TokenType::Limit))
+    {
+        stmt->limit = parse_limit();
+    }
+
+    if (match(TokenType::Offset))
+    {
+        stmt->offset = parse_limit();
+    }
+
+    return stmt;
+}
+
+void Parser::parse_select_core(const std::shared_ptr<SelectStatement> & stmt)
+{
+    if (match(TokenType::Distinct))
+    {
+        stmt->distinct = true;
+    }
+    else
+    {
+        match(TokenType::All);
+    }
     stmt->select_list = parse_select_list();
 
-    expect(TokenType::From);
-    stmt->from = parse_table_ref();
+    if (match(TokenType::From))
+    {
+        stmt->from = parse_table_ref();
+    }
 
     if (match(TokenType::Where))
     {
@@ -182,18 +257,53 @@ StmtPtr Parser::parse_select()
     {
         stmt->having = parse_expr();
     }
+}
 
-    if (match(TokenType::Order))
+std::vector<CteDef> Parser::parse_with_clause()
+{
+    std::vector<CteDef> ctes;
+    do
     {
-        expect(TokenType::By);
-        stmt->order_by = parse_order_by();
-    }
+        CteDef cte;
+        cte.name = expect(TokenType::Identifier).value;
+        expect(TokenType::As);
+        expect(TokenType::LParen);
+        expect(TokenType::Select);
+        cte.query = std::dynamic_pointer_cast<SelectStatement>(parse_select());
+        expect(TokenType::RParen);
+        ctes.push_back(std::move(cte));
+    } while (match(TokenType::Comma));
+    return ctes;
+}
 
-    if (match(TokenType::Limit))
+StmtPtr Parser::parse_alter_table()
+{
+    expect(TokenType::Table);
+    auto stmt = std::make_shared<AlterTableStatement>();
+    stmt->table_name = expect(TokenType::Identifier).value;
+
+    if (match(TokenType::Add))
     {
-        stmt->limit = parse_limit();
+        match(TokenType::Column);
+        stmt->action = AlterAction::AddColumn;
+        stmt->column = parse_column_def();
     }
-
+    else if (match(TokenType::Drop))
+    {
+        match(TokenType::Column);
+        stmt->action = AlterAction::DropColumn;
+        stmt->target_name = expect(TokenType::Identifier).value;
+    }
+    else if (match(TokenType::Rename))
+    {
+        expect(TokenType::To);
+        stmt->action = AlterAction::RenameTable;
+        stmt->target_name = expect(TokenType::Identifier).value;
+    }
+    else
+    {
+        throw ParseError(std::format("Unsupported ALTER TABLE action near '{}'", current().value));
+    }
     return stmt;
 }
 
@@ -316,8 +426,24 @@ StmtPtr Parser::parse_delete()
     return stmt;
 }
 
+StmtPtr Parser::parse_create_view()
+{
+    auto stmt = std::make_shared<CreateViewStatement>();
+    stmt->name = expect(TokenType::Identifier).value;
+    expect(TokenType::As);
+    expect(TokenType::Select);
+    stmt->query = parse_select();
+    return stmt;
+}
+
 StmtPtr Parser::parse_drop()
 {
+    if (match(TokenType::View))
+    {
+        auto stmt = std::make_shared<DropViewStatement>();
+        stmt->name = expect(TokenType::Identifier).value;
+        return stmt;
+    }
     expect(TokenType::Table);
 
     auto stmt = std::make_shared<DropTableStatement>();
@@ -338,55 +464,78 @@ StmtPtr Parser::parse_drop()
 
 std::vector<ExprPtr> Parser::parse_select_list()
 {
+    auto parse_item = [&]() -> ExprPtr
+    {
+        auto expr = parse_expr();
+        std::string alias;
+        if (match(TokenType::As))
+        {
+            alias = expect(TokenType::Identifier).value;
+        }
+        else if (check(TokenType::Identifier))
+        {
+            alias = advance_token().value;
+        }
+        if (!alias.empty())
+        {
+            auto wrapped = std::make_shared<AliasExpr>();
+            wrapped->expr = expr;
+            wrapped->alias = alias;
+            return wrapped;
+        }
+        return expr;
+    };
     std::vector<ExprPtr> list;
-    list.push_back(parse_expr());
+    list.push_back(parse_item());
     while (match(TokenType::Comma))
     {
-        list.push_back(parse_expr());
+        list.push_back(parse_item());
     }
     return list;
 }
 
-TableRefPtr Parser::parse_table_ref()
+TableRefPtr Parser::parse_table_primary()
 {
-    auto left = [&]() -> TableRefPtr
+    if (match(TokenType::LParen))
     {
-        Token name = expect(TokenType::Identifier);
-        auto ref = std::make_shared<SimpleTableRef>();
-        ref->table_name = name.value;
+        expect(TokenType::Select);
+        auto ref = std::make_shared<DerivedTableRef>();
+        ref->query = parse_select();
+        expect(TokenType::RParen);
         if (match(TokenType::As))
         {
-            Token alias = expect(TokenType::Identifier);
-            ref->alias = alias.value;
+            ref->alias = expect(TokenType::Identifier).value;
         }
         else if (check(TokenType::Identifier))
         {
             ref->alias = advance_token().value;
         }
         return ref;
-    }();
+    }
+    Token name = expect(TokenType::Identifier);
+    auto ref = std::make_shared<SimpleTableRef>();
+    ref->table_name = name.value;
+    if (match(TokenType::As))
+    {
+        ref->alias = expect(TokenType::Identifier).value;
+    }
+    else if (check(TokenType::Identifier))
+    {
+        ref->alias = advance_token().value;
+    }
+    return ref;
+}
+
+TableRefPtr Parser::parse_table_ref()
+{
+    auto left = parse_table_primary();
 
     while (true)
     {
         if (check(TokenType::Comma))
         {
             advance_token();
-            auto right = [&]() -> TableRefPtr
-            {
-                Token name = expect(TokenType::Identifier);
-                auto ref = std::make_shared<SimpleTableRef>();
-                ref->table_name = name.value;
-                if (match(TokenType::As))
-                {
-                    Token alias = expect(TokenType::Identifier);
-                    ref->alias = alias.value;
-                }
-                else if (check(TokenType::Identifier))
-                {
-                    ref->alias = advance_token().value;
-                }
-                return ref;
-            }();
+            auto right = parse_table_primary();
             auto join = std::make_shared<JoinTableRef>();
             join->join_type = JoinType::Cross;
             join->left = left;
@@ -395,7 +544,7 @@ TableRefPtr Parser::parse_table_ref()
         }
         else if (
             check(TokenType::Join) || check(TokenType::Inner) || check(TokenType::Left) || check(TokenType::Right)
-            || check(TokenType::Cross))
+            || check(TokenType::Full) || check(TokenType::Cross))
         {
             left = parse_join(left);
         }
@@ -420,11 +569,19 @@ TableRefPtr Parser::parse_join(TableRefPtr left)
     {
         advance_token();
         join_type = JoinType::Left;
+        match(TokenType::Outer);
     }
     else if (check(TokenType::Right))
     {
         advance_token();
         join_type = JoinType::Right;
+        match(TokenType::Outer);
+    }
+    else if (check(TokenType::Full))
+    {
+        advance_token();
+        join_type = JoinType::Full;
+        match(TokenType::Outer);
     }
     else if (check(TokenType::Cross))
     {
@@ -434,22 +591,7 @@ TableRefPtr Parser::parse_join(TableRefPtr left)
 
     expect(TokenType::Join);
 
-    auto right = [&]() -> TableRefPtr
-    {
-        Token name = expect(TokenType::Identifier);
-        auto ref = std::make_shared<SimpleTableRef>();
-        ref->table_name = name.value;
-        if (match(TokenType::As))
-        {
-            Token alias = expect(TokenType::Identifier);
-            ref->alias = alias.value;
-        }
-        else if (check(TokenType::Identifier))
-        {
-            ref->alias = advance_token().value;
-        }
-        return ref;
-    }();
+    auto right = parse_table_primary();
 
     ExprPtr condition = nullptr;
     if (join_type != JoinType::Cross)
@@ -567,53 +709,104 @@ ExprPtr Parser::parse_comparison()
     auto left = parse_addition();
     while (true)
     {
+        bool negated = false;
+        if (check(TokenType::Not)
+            && (peek_token().type == TokenType::In || peek_token().type == TokenType::Between || peek_token().type == TokenType::Like))
+        {
+            advance_token();
+            negated = true;
+        }
+        if (negated || check(TokenType::In) || check(TokenType::Between) || check(TokenType::Like))
+        {
+            if (match(TokenType::In))
+            {
+                expect(TokenType::LParen);
+                if (check(TokenType::Select))
+                {
+                    advance_token();
+                    auto in_sub = std::make_shared<InSubqueryExpr>();
+                    in_sub->operand = left;
+                    in_sub->query = parse_select();
+                    in_sub->negated = negated;
+                    expect(TokenType::RParen);
+                    left = in_sub;
+                }
+                else
+                {
+                    auto in = std::make_shared<InExpr>();
+                    in->operand = left;
+                    in->negated = negated;
+                    do
+                    {
+                        in->list.push_back(parse_expr());
+                    } while (match(TokenType::Comma));
+                    expect(TokenType::RParen);
+                    left = in;
+                }
+            }
+            else if (match(TokenType::Between))
+            {
+                auto between = std::make_shared<BetweenExpr>();
+                between->operand = left;
+                between->negated = negated;
+                between->low = parse_addition();
+                expect(TokenType::And);
+                between->high = parse_addition();
+                left = between;
+            }
+            else if (match(TokenType::Like))
+            {
+                auto like = std::make_shared<LikeExpr>();
+                like->operand = left;
+                like->negated = negated;
+                like->pattern = parse_addition();
+                left = like;
+            }
+            continue;
+        }
+        if (match(TokenType::Is))
+        {
+            bool negated = match(TokenType::Not);
+            if (match(TokenType::Distinct))
+            {
+                expect(TokenType::From);
+                auto distinct = std::make_shared<DistinctFromExpr>();
+                distinct->left = left;
+                distinct->negated = negated;
+                distinct->right = parse_addition();
+                left = distinct;
+                continue;
+            }
+            auto is_null = std::make_shared<IsNullExpr>();
+            is_null->operand = left;
+            is_null->negated = negated;
+            expect(TokenType::Null);
+            left = is_null;
+            continue;
+        }
         if (match(TokenType::Eq))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Eq;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Eq, left);
         }
         else if (match(TokenType::Ne))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Ne;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Ne, left);
         }
         else if (match(TokenType::Lt))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Lt;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Lt, left);
         }
         else if (match(TokenType::Le))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Le;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Le, left);
         }
         else if (match(TokenType::Gt))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Gt;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Gt, left);
         }
         else if (match(TokenType::Ge))
         {
-            auto binary = std::make_shared<BinaryOpExpr>();
-            binary->op = BinaryOpType::Ge;
-            binary->left = left;
-            binary->right = parse_addition();
-            left = binary;
+            left = parse_comparison_rhs(BinaryOpType::Ge, left);
         }
         else
         {
@@ -640,6 +833,14 @@ ExprPtr Parser::parse_addition()
         {
             auto binary = std::make_shared<BinaryOpExpr>();
             binary->op = BinaryOpType::Sub;
+            binary->left = left;
+            binary->right = parse_multiplication();
+            left = binary;
+        }
+        else if (match(TokenType::Concat))
+        {
+            auto binary = std::make_shared<BinaryOpExpr>();
+            binary->op = BinaryOpType::Concat;
             binary->left = left;
             binary->right = parse_multiplication();
             left = binary;
@@ -758,7 +959,7 @@ ExprPtr Parser::parse_primary()
         Token tok = advance_token();
         if (check(TokenType::LParen))
         {
-            return parse_function_call(tok.value);
+            return maybe_window(parse_function_call(tok.value));
         }
         if (match(TokenType::Dot))
         {
@@ -779,8 +980,42 @@ ExprPtr Parser::parse_primary()
         return col_ref;
     }
 
+    if (check(TokenType::Cast))
+    {
+        advance_token();
+        expect(TokenType::LParen);
+        auto cast_expr = std::make_shared<CastExpr>();
+        cast_expr->operand = parse_expr();
+        expect(TokenType::As);
+        cast_expr->target = parse_cast_target();
+        expect(TokenType::RParen);
+        return cast_expr;
+    }
+
+    if (check(TokenType::Case))
+    {
+        return parse_case_expr();
+    }
+
+    if (match(TokenType::Exists))
+    {
+        expect(TokenType::LParen);
+        expect(TokenType::Select);
+        auto exists = std::make_shared<ExistsExpr>();
+        exists->query = parse_select();
+        expect(TokenType::RParen);
+        return exists;
+    }
+
     if (match(TokenType::LParen))
     {
+        if (match(TokenType::Select))
+        {
+            auto subquery = std::make_shared<SubqueryExpr>();
+            subquery->query = parse_select();
+            expect(TokenType::RParen);
+            return subquery;
+        }
         auto expr = parse_expr();
         expect(TokenType::RParen);
         return expr;
@@ -789,17 +1024,193 @@ ExprPtr Parser::parse_primary()
     throw ParseError(std::format("Unexpected token '{}' in expression", current().value));
 }
 
+ExprPtr Parser::parse_case_expr()
+{
+    expect(TokenType::Case);
+    auto case_expr = std::make_shared<CaseExpr>();
+    if (!check(TokenType::When))
+    {
+        case_expr->operand = parse_expr();
+    }
+    while (match(TokenType::When))
+    {
+        auto cond = parse_expr();
+        expect(TokenType::Then);
+        auto result = parse_expr();
+        case_expr->whens.emplace_back(cond, result);
+    }
+    if (case_expr->whens.empty())
+    {
+        throw ParseError("CASE requires at least one WHEN clause");
+    }
+    if (match(TokenType::Else))
+    {
+        case_expr->else_expr = parse_expr();
+    }
+    expect(TokenType::End);
+    return case_expr;
+}
+
+ExprPtr Parser::parse_comparison_rhs(BinaryOpType op, const ExprPtr & left)
+{
+    if (check(TokenType::Any) || check(TokenType::All) || check(TokenType::Some))
+    {
+        bool all = check(TokenType::All);
+        advance_token();
+        expect(TokenType::LParen);
+        expect(TokenType::Select);
+        auto quantified = std::make_shared<QuantifiedExpr>();
+        quantified->operand = left;
+        quantified->op = op;
+        quantified->all = all;
+        quantified->query = parse_select();
+        expect(TokenType::RParen);
+        return quantified;
+    }
+    auto binary = std::make_shared<BinaryOpExpr>();
+    binary->op = op;
+    binary->left = left;
+    binary->right = parse_addition();
+    return binary;
+}
+
+popo::type::ValueType Parser::parse_cast_target()
+{
+    if (match(TokenType::Int) || match(TokenType::Integer_))
+        return popo::type::ValueType::Int32;
+    if (match(TokenType::Bigint))
+        return popo::type::ValueType::Int64;
+    if (match(TokenType::Smallint))
+        return popo::type::ValueType::Int16;
+    if (match(TokenType::Tinyint))
+        return popo::type::ValueType::Int8;
+    if (match(TokenType::Float_))
+        return popo::type::ValueType::Float32;
+    if (match(TokenType::Double))
+        return popo::type::ValueType::Float64;
+    if (match(TokenType::Boolean) || match(TokenType::Bool_))
+        return popo::type::ValueType::Bool;
+    if (match(TokenType::Varchar) || match(TokenType::Char) || match(TokenType::Text))
+    {
+        if (match(TokenType::LParen))
+        {
+            expect(TokenType::Integer);
+            expect(TokenType::RParen);
+        }
+        return popo::type::ValueType::String;
+    }
+    throw ParseError(std::format("Unsupported CAST target '{}'", current().value));
+}
+
+ExprPtr Parser::maybe_window(ExprPtr func)
+{
+    if (!match(TokenType::Over))
+    {
+        return func;
+    }
+    expect(TokenType::LParen);
+    auto window = std::make_shared<WindowExpr>();
+    window->function = std::move(func);
+    if (match(TokenType::Partition))
+    {
+        expect(TokenType::By);
+        do
+        {
+            window->partition_by.push_back(parse_expr());
+        } while (match(TokenType::Comma));
+    }
+    if (match(TokenType::Order))
+    {
+        expect(TokenType::By);
+        window->order_by = parse_order_by();
+    }
+    expect(TokenType::RParen);
+    return window;
+}
+
 ExprPtr Parser::parse_function_call(const std::string & name)
 {
     expect(TokenType::LParen);
-
-    auto func = std::make_shared<FunctionCallExpr>();
 
     std::string upper_name;
     for (char c : name)
     {
         upper_name.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
     }
+
+    if (upper_name == "XMLELEMENT")
+    {
+        auto call = std::make_shared<ScalarCallExpr>();
+        call->name = upper_name;
+        if (check(TokenType::Identifier))
+        {
+            std::string word = current().value;
+            for (char & ch : word)
+            {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            if (word == "name")
+            {
+                advance_token();
+            }
+        }
+        auto tag = std::make_shared<LiteralExpr>();
+        tag->value = popo::type::Value(popo::type::ValueType::String, expect(TokenType::Identifier).value);
+        call->args.push_back(tag);
+        if (match(TokenType::Comma))
+        {
+            call->args.push_back(parse_expr());
+        }
+        expect(TokenType::RParen);
+        return call;
+    }
+
+    if (upper_name == "XMLFOREST")
+    {
+        auto call = std::make_shared<ScalarCallExpr>();
+        call->name = upper_name;
+        if (!check(TokenType::RParen))
+        {
+            do
+            {
+                auto expr = parse_expr();
+                std::string alias;
+                if (match(TokenType::As))
+                {
+                    alias = expect(TokenType::Identifier).value;
+                }
+                else if (expr->type == ExprType::ColumnRef)
+                {
+                    alias = static_cast<const ColumnRefExpr &>(*expr).column_name;
+                }
+                auto name_lit = std::make_shared<LiteralExpr>();
+                name_lit->value = popo::type::Value(popo::type::ValueType::String, alias);
+                call->args.push_back(name_lit);
+                call->args.push_back(expr);
+            } while (match(TokenType::Comma));
+        }
+        expect(TokenType::RParen);
+        return call;
+    }
+
+    bool aggregate = upper_name == "COUNT" || upper_name == "SUM" || upper_name == "AVG" || upper_name == "MIN" || upper_name == "MAX"
+        || upper_name == "XMLAGG";
+    if (!aggregate)
+    {
+        auto call = std::make_shared<ScalarCallExpr>();
+        call->name = upper_name;
+        if (!check(TokenType::RParen))
+        {
+            do
+            {
+                call->args.push_back(parse_expr());
+            } while (match(TokenType::Comma));
+        }
+        expect(TokenType::RParen);
+        return call;
+    }
+
+    auto func = std::make_shared<FunctionCallExpr>();
 
     if (upper_name == "COUNT")
         func->func = AggFuncType::Count;
@@ -812,7 +1223,7 @@ ExprPtr Parser::parse_function_call(const std::string & name)
     else if (upper_name == "MAX")
         func->func = AggFuncType::Max;
     else
-        func->func = AggFuncType::Count;
+        func->func = AggFuncType::XmlAgg;
 
     if (match(TokenType::Distinct))
     {

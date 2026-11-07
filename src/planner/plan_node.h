@@ -24,6 +24,13 @@ enum class PlanNodeType
     CreateTable,
     CreateIndex,
     DropTable,
+    AlterTable,
+    Distinct,
+    SetOp,
+    SubqueryScan,
+    RecursiveScan,
+    Window,
+    Dual,
     ShowTables,
     Describe,
     ShowDatabases,
@@ -31,7 +38,9 @@ enum class PlanNodeType
     ShowVariables,
     ShowStatus,
     SelectDatabase,
-    SelectSystemVar
+    SelectSystemVar,
+    CreateView,
+    DropView
 };
 
 struct PlanNode;
@@ -98,12 +107,62 @@ struct SortNode : PlanNode
     SortNode() { type = PlanNodeType::Sort; }
 };
 
-// Limit: LIMIT N
+// Limit: LIMIT N OFFSET M
 struct LimitNode : PlanNode
 {
     PlanNodePtr child;
-    int64_t limit_count;
+    int64_t limit_count = -1; // -1: no limit (offset only)
+    int64_t offset_count = 0;
     LimitNode() { type = PlanNodeType::Limit; }
+};
+
+// Distinct: deduplicate rows
+struct DistinctNode : PlanNode
+{
+    PlanNodePtr child;
+    DistinctNode() { type = PlanNodeType::Distinct; }
+};
+
+// Set operation: UNION / INTERSECT / EXCEPT
+struct SetOpNode : PlanNode
+{
+    PlanNodePtr left;
+    PlanNodePtr right;
+    popo::parser::SetOpKind kind = popo::parser::SetOpKind::Union;
+    bool is_all = false;
+    SetOpNode() { type = PlanNodeType::SetOp; }
+};
+
+// Scan over a materialized subquery (CTE reference or derived table)
+struct SubqueryScanNode : PlanNode
+{
+    std::string alias;
+    std::string cte_name;
+    bool recursive = false;
+    std::vector<std::string> column_names;
+    PlanNodePtr child;
+    SubqueryScanNode() { type = PlanNodeType::SubqueryScan; }
+};
+
+// Self-reference inside a WITH RECURSIVE body. Reads the previous iteration.
+struct RecursiveScanNode : PlanNode
+{
+    std::string cte_name;
+    RecursiveScanNode() { type = PlanNodeType::RecursiveScan; }
+};
+
+// Window functions computed over the child rows.
+struct WindowNode : PlanNode
+{
+    PlanNodePtr child;
+    std::vector<popo::parser::ExprPtr> windows;
+    WindowNode() { type = PlanNodeType::Window; }
+};
+
+// Single empty row: SELECT without FROM
+struct DualNode : PlanNode
+{
+    DualNode() { type = PlanNodeType::Dual; }
 };
 
 // Insert rows into a table
@@ -157,6 +216,16 @@ struct DropTableNode : PlanNode
     DropTableNode() { type = PlanNodeType::DropTable; }
 };
 
+// Alter table DDL
+struct AlterTableNode : PlanNode
+{
+    std::string table_name;
+    popo::parser::AlterAction action;
+    popo::parser::ColumnDef column;
+    std::string target_name;
+    AlterTableNode() { type = PlanNodeType::AlterTable; }
+};
+
 // Show tables
 struct ShowTablesNode : PlanNode
 {
@@ -205,6 +274,19 @@ struct SelectSystemVarNode : PlanNode
 {
     std::string var_name;
     SelectSystemVarNode() { type = PlanNodeType::SelectSystemVar; }
+};
+
+struct CreateViewNode : PlanNode
+{
+    std::string name;
+    popo::parser::StmtPtr query;
+    CreateViewNode() { type = PlanNodeType::CreateView; }
+};
+
+struct DropViewNode : PlanNode
+{
+    std::string name;
+    DropViewNode() { type = PlanNodeType::DropView; }
 };
 
 } // namespace popo::planner

@@ -169,19 +169,43 @@ popo::type::Value do_neg(const popo::type::Value & v)
     return popo::type::Value(popo::type::ValueType::Int64, -to_int64(v));
 }
 
+bool sql_comparable(const popo::type::Value & l, const popo::type::Value & r)
+{
+    if (l.datatype() == popo::type::ValueType::Null || r.datatype() == popo::type::ValueType::Null)
+    {
+        return false;
+    }
+    return l.datatype() == r.datatype() || (l.is_numeric() && r.is_numeric());
+}
+
+bool do_eq(const popo::type::Value & l, const popo::type::Value & r)
+{
+    return sql_comparable(l, r) && l == r;
+}
+
 bool do_le(const popo::type::Value & l, const popo::type::Value & r)
 {
-    return !(r < l);
+    return sql_comparable(l, r) && !(r < l);
 }
 
 bool do_ge(const popo::type::Value & l, const popo::type::Value & r)
 {
-    return !(l < r);
+    return sql_comparable(l, r) && !(l < r);
 }
 
 bool do_ne(const popo::type::Value & l, const popo::type::Value & r)
 {
-    return !(l == r);
+    return sql_comparable(l, r) && !(l == r);
+}
+
+bool do_lt(const popo::type::Value & l, const popo::type::Value & r)
+{
+    return sql_comparable(l, r) && l < r;
+}
+
+bool do_gt(const popo::type::Value & l, const popo::type::Value & r)
+{
+    return sql_comparable(l, r) && l > r;
 }
 
 } // anonymous namespace
@@ -357,7 +381,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             case OpCode::Eq: {
                 auto r = pop();
                 auto l = pop();
-                push(make_bool_value(l == r));
+                push(make_bool_value(do_eq(l, r)));
                 pc_++;
                 break;
             }
@@ -371,7 +395,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             case OpCode::Lt: {
                 auto r = pop();
                 auto l = pop();
-                push(make_bool_value(l < r));
+                push(make_bool_value(do_lt(l, r)));
                 pc_++;
                 break;
             }
@@ -385,7 +409,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             case OpCode::Gt: {
                 auto r = pop();
                 auto l = pop();
-                push(make_bool_value(l > r));
+                push(make_bool_value(do_gt(l, r)));
                 pc_++;
                 break;
             }

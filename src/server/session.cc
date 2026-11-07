@@ -3,6 +3,7 @@
 #include <format>
 #include <spdlog/spdlog.h>
 #include "bytecode/fast_path.h"
+#include "executor/executor.h"
 #include "server/protocol.h"
 
 namespace popo::server
@@ -139,23 +140,37 @@ void Session::handle_query(const std::string & sql)
         }
         auto & plan = *plan_result;
 
-        auto comp_result = compiler.compile(plan);
+        popo::bytecode::ExecuteSuccess exec_result;
+        if (popo::executor::needs_generic_executor(stmt) || popo::executor::plan_needs_generic_executor(plan))
+        {
+            popo::executor::Executor executor(schema_mgr_, engine_);
+            auto exec = executor.execute(plan);
+            if (!exec)
+            {
+                send_error(1064, exec.error().error_message);
+                return;
+            }
+            exec_result = std::move(*exec);
+        }
+        else
+        {
+            auto comp_result = compiler.compile(plan);
+            if (!comp_result)
+            {
+                send_error(1064, comp_result.error().error_message);
+                return;
+            }
+            auto vm_result = vm.execute(*comp_result);
+            if (!vm_result)
+            {
+                send_error(1064, vm_result.error().error_message);
+                return;
+            }
+            exec_result = std::move(*vm_result);
+        }
         auto t_comp1 = clock::now();
-        if (!comp_result)
-        {
-            send_error(1064, comp_result.error().error_message);
-            return;
-        }
-        auto & program = *comp_result;
-
-        auto vm_result = vm.execute(program);
-        auto t_vm1 = clock::now();
-        if (!vm_result)
-        {
-            send_error(1064, vm_result.error().error_message);
-            return;
-        }
-        auto & result = *vm_result;
+        auto t_vm1 = t_comp1;
+        auto & result = exec_result;
 
         auto t_send0 = clock::now();
         if (!result.columns.empty())

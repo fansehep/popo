@@ -13,6 +13,9 @@ namespace popo::parser
 // Forward declarations
 struct Expr;
 using ExprPtr = std::shared_ptr<Expr>;
+struct Statement;
+using StmtPtr = std::shared_ptr<Statement>;
+struct SelectStatement;
 
 // Expression types
 enum class ExprType
@@ -22,7 +25,21 @@ enum class ExprType
     BinaryOp,
     UnaryOp,
     FunctionCall,
-    Star
+    Star,
+    In,
+    Between,
+    Like,
+    IsNull,
+    Case,
+    Subquery,
+    InSubquery,
+    Exists,
+    Alias,
+    DistinctFrom,
+    Quantified,
+    ScalarCall,
+    Cast,
+    Window
 };
 
 enum class BinaryOpType
@@ -41,7 +58,9 @@ enum class BinaryOpType
     Ge,
     // Logical
     And,
-    Or
+    Or,
+    // String
+    Concat
 };
 
 enum class UnaryOpType
@@ -56,7 +75,8 @@ enum class AggFuncType
     Sum,
     Avg,
     Min,
-    Max
+    Max,
+    XmlAgg
 };
 
 struct Expr
@@ -107,11 +127,125 @@ struct FunctionCallExpr : Expr
     FunctionCallExpr() { type = ExprType::FunctionCall; }
 };
 
+struct InExpr : Expr
+{
+    ExprPtr operand;
+    std::vector<ExprPtr> list;
+    bool negated = false;
+    InExpr() { type = ExprType::In; }
+};
+
+struct BetweenExpr : Expr
+{
+    ExprPtr operand;
+    ExprPtr low;
+    ExprPtr high;
+    bool negated = false;
+    BetweenExpr() { type = ExprType::Between; }
+};
+
+struct LikeExpr : Expr
+{
+    ExprPtr operand;
+    ExprPtr pattern;
+    bool negated = false;
+    LikeExpr() { type = ExprType::Like; }
+};
+
+struct IsNullExpr : Expr
+{
+    ExprPtr operand;
+    bool negated = false; // IS NOT NULL
+    IsNullExpr() { type = ExprType::IsNull; }
+};
+
+struct CaseExpr : Expr
+{
+    ExprPtr operand; // simple CASE operand, null for searched CASE
+    std::vector<std::pair<ExprPtr, ExprPtr>> whens; // condition/value -> result
+    ExprPtr else_expr; // optional
+    CaseExpr() { type = ExprType::Case; }
+};
+
+// Scalar subquery: (SELECT ...)
+struct SubqueryExpr : Expr
+{
+    StmtPtr query;
+    SubqueryExpr() { type = ExprType::Subquery; }
+};
+
+// operand [NOT] IN (SELECT ...)
+struct InSubqueryExpr : Expr
+{
+    ExprPtr operand;
+    StmtPtr query;
+    bool negated = false;
+    InSubqueryExpr() { type = ExprType::InSubquery; }
+};
+
+// EXISTS (SELECT ...)
+struct ExistsExpr : Expr
+{
+    StmtPtr query;
+    ExistsExpr() { type = ExprType::Exists; }
+};
+
+// expr AS alias (select list only)
+struct AliasExpr : Expr
+{
+    ExprPtr expr;
+    std::string alias;
+    AliasExpr() { type = ExprType::Alias; }
+};
+
+// expr IS [NOT] DISTINCT FROM expr. NULL matches NULL.
+struct DistinctFromExpr : Expr
+{
+    ExprPtr left;
+    ExprPtr right;
+    bool negated = false; // IS NOT DISTINCT FROM
+    DistinctFromExpr() { type = ExprType::DistinctFrom; }
+};
+
+// expr op ANY|ALL (SELECT ...)
+struct QuantifiedExpr : Expr
+{
+    ExprPtr operand;
+    BinaryOpType op = BinaryOpType::Eq;
+    bool all = false;
+    StmtPtr query;
+    QuantifiedExpr() { type = ExprType::Quantified; }
+};
+
+// COALESCE, NULLIF, UPPER, XML publishing functions, and other scalar calls.
+struct ScalarCallExpr : Expr
+{
+    std::string name;
+    std::vector<ExprPtr> args;
+    ScalarCallExpr() { type = ExprType::ScalarCall; }
+};
+
+struct CastExpr : Expr
+{
+    ExprPtr operand;
+    popo::type::ValueType target = popo::type::ValueType::Int64;
+    CastExpr() { type = ExprType::Cast; }
+};
+
 // Order by item
 struct OrderByItem
 {
     ExprPtr expr;
     bool ascending = true;
+};
+
+// function OVER (PARTITION BY ... ORDER BY ...)
+struct WindowExpr : Expr
+{
+    ExprPtr function;
+    std::vector<ExprPtr> partition_by;
+    std::vector<OrderByItem> order_by;
+    WindowExpr() { type = ExprType::Window; }
 };
 
 // Join type
@@ -120,6 +254,7 @@ enum class JoinType
     Inner,
     Left,
     Right,
+    Full,
     Cross
 };
 
@@ -130,7 +265,8 @@ using TableRefPtr = std::shared_ptr<TableRef>;
 enum class TableRefType
 {
     Simple,
-    Join
+    Join,
+    Derived
 };
 
 struct TableRef
@@ -153,6 +289,14 @@ struct JoinTableRef : TableRef
     TableRefPtr right;
     ExprPtr condition;
     JoinTableRef() { type = TableRefType::Join; }
+};
+
+// FROM (SELECT ...) AS alias
+struct DerivedTableRef : TableRef
+{
+    StmtPtr query;
+    std::string alias;
+    DerivedTableRef() { type = TableRefType::Derived; }
 };
 
 // Column definition for CREATE TABLE
@@ -184,6 +328,7 @@ enum class StmtType
     Update,
     Delete,
     DropTable,
+    AlterTable,
     ShowTables,
     Describe,
     ShowDatabases,
@@ -191,7 +336,9 @@ enum class StmtType
     ShowVariables,
     ShowStatus,
     SelectDatabase,
-    SelectSystemVar
+    SelectSystemVar,
+    CreateView,
+    DropView
 };
 
 struct Statement
@@ -199,18 +346,57 @@ struct Statement
     StmtType type;
     virtual ~Statement() = default;
 };
-using StmtPtr = std::shared_ptr<Statement>;
+
+// WITH name AS (SELECT ...)
+enum class SetOpKind
+{
+    Union,
+    Intersect,
+    Except
+};
+
+struct SetTerm
+{
+    SetOpKind kind = SetOpKind::Union;
+    bool is_all = false;
+    std::shared_ptr<SelectStatement> query;
+};
+
+struct CteDef
+{
+    std::string name;
+    std::shared_ptr<SelectStatement> query;
+    bool recursive = false;
+};
 
 struct SelectStatement : Statement
 {
+    std::vector<CteDef> with_clause; // WITH (optional)
+    bool distinct = false;
     std::vector<ExprPtr> select_list; // projection columns
-    TableRefPtr from; // FROM clause
+    TableRefPtr from; // FROM clause (optional)
     ExprPtr where; // WHERE clause (optional)
     std::vector<ExprPtr> group_by; // GROUP BY (optional)
     ExprPtr having; // HAVING (optional)
     std::vector<OrderByItem> order_by; // ORDER BY (optional)
     std::optional<int64_t> limit; // LIMIT (optional)
+    std::optional<int64_t> offset; // OFFSET (optional)
+    // UNION / INTERSECT / EXCEPT. INTERSECT and EXCEPT bind tighter than UNION.
+    std::vector<SetTerm> set_ops;
     SelectStatement() { type = StmtType::Select; }
+};
+
+struct CreateViewStatement : Statement
+{
+    std::string name;
+    StmtPtr query;
+    CreateViewStatement() { type = StmtType::CreateView; }
+};
+
+struct DropViewStatement : Statement
+{
+    std::string name;
+    DropViewStatement() { type = StmtType::DropView; }
 };
 
 struct InsertStatement : Statement
@@ -257,6 +443,22 @@ struct DropTableStatement : Statement
     std::string table_name;
     bool if_exists = false;
     DropTableStatement() { type = StmtType::DropTable; }
+};
+
+enum class AlterAction
+{
+    AddColumn,
+    DropColumn,
+    RenameTable
+};
+
+struct AlterTableStatement : Statement
+{
+    std::string table_name;
+    AlterAction action;
+    ColumnDef column; // ADD COLUMN
+    std::string target_name; // DROP COLUMN: column name; RENAME TO: new table name
+    AlterTableStatement() { type = StmtType::AlterTable; }
 };
 
 struct ShowTablesStatement : Statement

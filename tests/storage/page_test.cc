@@ -25,9 +25,9 @@ TEST_F(PageTest, InsertAndGetTuple)
     std::string data = "hello world";
     auto slot = page.insert_tuple(data.data(), static_cast<uint16_t>(data.size()));
     ASSERT_TRUE(slot.has_value());
-    EXPECT_EQ(slot.value(), 0);
+    EXPECT_EQ(*slot, 0);
 
-    auto [ptr, len] = page.get_tuple(slot.value());
+    auto [ptr, len] = page.get_tuple(*slot);
     ASSERT_NE(ptr, nullptr);
     EXPECT_EQ(len, data.size());
     EXPECT_EQ(std::string(ptr, len), data);
@@ -41,7 +41,7 @@ TEST_F(PageTest, InsertMultipleTuples)
     {
         auto s = page.insert_tuple(t.data(), static_cast<uint16_t>(t.size()));
         ASSERT_TRUE(s.has_value());
-        slots.push_back(s.value());
+        slots.push_back(*s);
     }
     EXPECT_EQ(page.slot_count(), 4);
 
@@ -59,8 +59,8 @@ TEST_F(PageTest, DeleteTuple)
     auto slot = page.insert_tuple(data.data(), static_cast<uint16_t>(data.size()));
     ASSERT_TRUE(slot.has_value());
 
-    EXPECT_TRUE(page.delete_tuple(slot.value()));
-    auto [ptr, len] = page.get_tuple(slot.value());
+    EXPECT_TRUE(page.delete_tuple(*slot));
+    auto [ptr, len] = page.get_tuple(*slot);
     EXPECT_EQ(ptr, nullptr);
     EXPECT_EQ(len, 0);
 }
@@ -72,11 +72,11 @@ TEST_F(PageTest, UpdateTupleInPlace)
     ASSERT_TRUE(slot.has_value());
 
     std::string updated = "replaced"; // same size
-    auto new_slot = page.update_tuple(slot.value(), updated.data(), static_cast<uint16_t>(updated.size()));
+    auto new_slot = page.update_tuple(*slot, updated.data(), static_cast<uint16_t>(updated.size()));
     ASSERT_TRUE(new_slot.has_value());
-    EXPECT_EQ(new_slot.value(), slot.value()); // in-place
+    EXPECT_EQ(*new_slot, *slot); // in-place
 
-    auto [ptr, len] = page.get_tuple(new_slot.value());
+    auto [ptr, len] = page.get_tuple(*new_slot);
     ASSERT_NE(ptr, nullptr);
     EXPECT_EQ(std::string(ptr, len), updated);
 }
@@ -89,11 +89,11 @@ TEST_F(PageTest, UpdateTupleRelocate)
 
     // Data larger than old slot — should return nullopt (caller handles re-insert)
     std::string large = "this is a much larger string that won't fit in the old slot";
-    auto new_slot = page.update_tuple(slot.value(), large.data(), static_cast<uint16_t>(large.size()));
+    auto new_slot = page.update_tuple(*slot, large.data(), static_cast<uint16_t>(large.size()));
     EXPECT_FALSE(new_slot.has_value()) << "Relocation is no longer supported in-page; caller should delete+reinsert";
 
     // Old slot should still be valid (update_tuple didn't modify it on failure)
-    auto [old_ptr, old_len] = page.get_tuple(slot.value());
+    auto [old_ptr, old_len] = page.get_tuple(*slot);
     ASSERT_NE(old_ptr, nullptr);
     EXPECT_EQ(std::string(old_ptr, old_len), small);
 }

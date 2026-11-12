@@ -69,9 +69,14 @@ public:
     /**
      @return: 所有已注册的表名
     */
-    popo::base::Result<void> create_view(const std::string & name, popo::parser::StmtPtr query);
-    popo::base::Result<void> drop_view(const std::string & name);
+    popo::base::Result<void> create_view(
+        const std::string & name,
+        popo::parser::StmtPtr query,
+        std::vector<std::string> column_names = {},
+        bool or_replace = false);
+    popo::base::Result<void> drop_view(const std::string & name, bool if_exists = false);
     popo::parser::StmtPtr find_view(const std::string & name);
+    std::vector<std::string> find_view_columns(const std::string & name);
 
     std::vector<std::string> all_table_names() const
     {
@@ -87,6 +92,7 @@ private:
     std::mutex mtx_;
     std::unordered_map<std::string, popo::catalog::SchemaRef> schema_map_;
     std::unordered_map<std::string, popo::parser::StmtPtr> views_;
+    std::unordered_map<std::string, std::vector<std::string>> view_columns_;
     SchemaId next_schema_id_ = 1; // 用于生成唯一的SchemaId
 
     // 辅助函数：验证列定义

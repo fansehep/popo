@@ -26,12 +26,11 @@ protected:
         std::filesystem::remove_all(dir_);
     }
 
-    popo::test::SqlResult must(const std::string & sql)
+    popo::test::SqlSuccess must(const std::string & sql)
     {
-        std::cerr << "[sql] " << sql << std::endl;
         auto result = runner_->exec(sql);
-        EXPECT_TRUE(result.ok) << sql << " -> " << result.error;
-        return result;
+        EXPECT_TRUE(result) << sql << " -> " << (result ? "" : result.error().error_message);
+        return result ? std::move(*result) : popo::test::SqlSuccess{};
     }
 
     void seed_emp()
@@ -107,8 +106,12 @@ TEST_F(SqlSyntaxTest, IsNullAndIsNotNull)
     EXPECT_EQ(non_nulls.result.rows[1]->values_[0].i32(), 3);
 
     // NULL never matches ordinary comparison
-    auto eq = must("SELECT id FROM t WHERE note = 'x' OR note <> 'x'");
-    ASSERT_EQ(eq.result.rows.size(), 2u);
+    auto eq = must("SELECT id FROM t WHERE note = 'x'");
+    ASSERT_EQ(eq.result.rows.size(), 1u);
+    auto ne = must("SELECT id FROM t WHERE note <> 'x'");
+    ASSERT_EQ(ne.result.rows.size(), 1u);
+    auto both = must("SELECT id FROM t WHERE note = 'x' OR note <> 'x'");
+    ASSERT_EQ(both.result.rows.size(), 2u);
 }
 
 TEST_F(SqlSyntaxTest, CaseWhen)
@@ -289,7 +292,7 @@ TEST_F(SqlSyntaxTest, AlterTableAddColumn)
     EXPECT_EQ(u.result.rows[0]->values_[0].to_f64(), 50);
 
     auto dup = runner_->exec("ALTER TABLE emp ADD COLUMN bonus INT");
-    EXPECT_FALSE(dup.ok);
+    EXPECT_FALSE(dup);
 }
 
 TEST_F(SqlSyntaxTest, AlterTableDropColumn)
@@ -303,7 +306,7 @@ TEST_F(SqlSyntaxTest, AlterTableDropColumn)
     EXPECT_EQ(r.result.rows[0]->values_[2].to_f64(), 100);
 
     auto pk = runner_->exec("ALTER TABLE emp DROP COLUMN id");
-    EXPECT_FALSE(pk.ok);
+    EXPECT_FALSE(pk);
 }
 
 TEST_F(SqlSyntaxTest, AlterTableRename)
@@ -315,7 +318,7 @@ TEST_F(SqlSyntaxTest, AlterTableRename)
     EXPECT_EQ(r.result.rows[0]->values_[0].i64(), 5);
 
     auto old = runner_->exec("SELECT * FROM emp");
-    EXPECT_FALSE(old.ok);
+    EXPECT_FALSE(old);
 }
 
 TEST_F(SqlSyntaxTest, AlterTableKeepsSecondaryIndex)

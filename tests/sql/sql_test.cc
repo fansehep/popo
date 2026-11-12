@@ -26,11 +26,11 @@ protected:
         std::filesystem::remove_all(dir_);
     }
 
-    popo::test::SqlResult must(const std::string & sql)
+    popo::test::SqlSuccess must(const std::string & sql)
     {
         auto result = runner_->exec(sql);
-        EXPECT_TRUE(result.ok) << sql << " -> " << result.error;
-        return result;
+        EXPECT_TRUE(result) << sql << " -> " << (result ? "" : result.error().error_message);
+        return result ? std::move(*result) : popo::test::SqlSuccess{};
     }
 
     std::filesystem::path dir_;

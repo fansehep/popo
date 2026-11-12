@@ -32,3 +32,7 @@ gtest_discover_tests(btree_page_test)
 add_executable(stress_test stress_test.cc)
 target_link_libraries(stress_test PRIVATE storage_lib type_lib catalog_lib base_lib gtest gtest_main spdlog)
 gtest_discover_tests(stress_test)
+
+add_executable(recovery_test recovery_test.cc)
+target_link_libraries(recovery_test PRIVATE storage_lib type_lib catalog_lib base_lib gtest gtest_main spdlog)
+gtest_discover_tests(recovery_test)

@@ -1,12 +1,14 @@
 #pragma once
 
 #include <chrono>
-#include <stdexcept>
+#include <optional>
 #include <string>
 #include <utility>
 
+#include "src/base/error.h"
 #include "src/bytecode/compiler.h"
 #include "src/bytecode/fast_path.h"
+#include "src/bytecode/txn_session.h"
 #include "src/bytecode/vm.h"
 #include "src/catalog/schema_mgr.h"
 #include "src/executor/executor.h"
@@ -17,16 +19,16 @@
 namespace popo::test
 {
 
-struct SqlResult
+struct SqlSuccess
 {
-    bool ok = false;
-    std::string error;
     popo::bytecode::ExecuteSuccess result;
     int64_t parse_us = 0;
     int64_t plan_us = 0;
     int64_t compile_us = 0;
     int64_t vm_us = 0;
 };
+
+using SqlResult = popo::base::Result<SqlSuccess>;
 
 class SqlRunner;
 
@@ -35,27 +37,20 @@ class SqlTxn
 {
 public:
     SqlTxn() = default;
-    SqlTxn(SqlTxn && other) noexcept
-        : runner_(other.runner_)
-        , txn_(other.txn_)
-    {
-        other.runner_ = nullptr;
-        other.txn_ = nullptr;
-    }
+    SqlTxn(SqlTxn && other) noexcept : runner_(other.runner_) { other.runner_ = nullptr; }
     SqlTxn & operator=(SqlTxn &&) = delete;
     SqlTxn(const SqlTxn &) = delete;
     SqlTxn & operator=(const SqlTxn &) = delete;
     ~SqlTxn();
 
     SqlResult exec(const std::string & sql);
-    void commit();
+    popo::base::Result<void> commit();
 
 private:
     friend class SqlRunner;
     explicit SqlTxn(SqlRunner * runner);
 
     SqlRunner * runner_ = nullptr;
-    popo::txn::Transaction * txn_ = nullptr;
 };
 
 // Same pipeline as Session::handle_query: one SQL string, one statement at a time.
@@ -64,97 +59,153 @@ class SqlRunner
 public:
     explicit SqlRunner(const std::string & data_dir, size_t buffer_pages = 4096)
         : engine_(data_dir, buffer_pages)
+        , session_(engine_)
         , planner_(schema_)
         , compiler_(schema_)
         , vm_(schema_, engine_)
     {
-        engine_.init();
+        auto initialized = engine_.init();
+        if (!initialized)
+        {
+            init_error_ = initialized.error();
+        }
+        vm_.set_session(&session_);
     }
 
     SqlResult exec(const std::string & sql) { return run(sql, nullptr); }
 
-    SqlTxn begin() { return SqlTxn(this); }
+    // Run one statement inside a caller-owned transaction: a second "connection"
+    // against the same engine, which is how the isolation tests interleave.
+    SqlResult exec_in(const std::string & sql, popo::txn::Transaction * txn) { return run(sql, txn); }
+
+    popo::base::Result<SqlTxn> begin()
+    {
+        if (init_error_)
+        {
+            return std::unexpected(*init_error_);
+        }
+        auto begun = session_.begin();
+        if (!begun)
+        {
+            return std::unexpected(begun.error());
+        }
+        return SqlTxn(this);
+    }
+
+    // Isolation level for subsequent transactions.
+    popo::bytecode::TxnSession & session() { return session_; }
+    popo::storage::StorageEngine & engine() { return engine_; }
+    popo::catalog::SchemaManager & schema() { return schema_; }
 
 private:
     friend class SqlTxn;
 
-    SqlResult run(const std::string & sql, popo::txn::Transaction * outer)
+    SqlResult run(const std::string & sql, popo::txn::Transaction * txn)
     {
         using clock = std::chrono::steady_clock;
-        SqlResult out;
-        try
+        if (init_error_)
         {
-            if (auto fast = popo::bytecode::try_point_select(schema_, engine_, sql))
+            return std::unexpected(*init_error_);
+        }
+        SqlSuccess out;
+        // A caller-owned transaction belongs to the caller: never commit or roll
+        // it back from here.
+        const bool own_session = txn == nullptr;
+        auto fail = [&](popo::base::Error error) -> SqlResult
+        {
+            if (own_session)
             {
-                out.result = std::move(*fast);
-                out.ok = true;
-                return out;
+                session_.statement_failed();
             }
-            auto t0 = clock::now();
-            popo::parser::Parser parser;
-            auto parsed = parser.parse(sql);
-            auto t1 = clock::now();
-            out.parse_us = us(t1 - t0);
-            if (!parsed)
+            return std::unexpected(std::move(error));
+        };
+
+        auto * read_txn = own_session ? (session_.in_transaction() ? session_.current() : nullptr) : txn;
+        if (auto fast = popo::bytecode::try_point_select(schema_, engine_, sql, read_txn))
+        {
+            out.result = std::move(*fast);
+            return out;
+        }
+        auto t0 = clock::now();
+        popo::parser::Parser parser;
+        auto parsed = parser.parse(sql);
+        auto t1 = clock::now();
+        out.parse_us = us(t1 - t0);
+        if (!parsed)
+        {
+            return fail(parsed.error());
+        }
+
+        for (const auto & stmt : *parsed)
+        {
+            auto tp0 = clock::now();
+            auto plan = planner_.plan(stmt);
+            auto tp1 = clock::now();
+            out.plan_us += us(tp1 - tp0);
+            if (!plan)
             {
-                out.error = parsed.error().error_message;
-                return out;
+                return fail(plan.error());
             }
 
-            for (const auto & stmt : *parsed)
+            popo::txn::Transaction * use_txn = txn;
+            if (own_session)
             {
-                auto tp0 = clock::now();
-                auto plan = planner_.plan(stmt);
-                auto tp1 = clock::now();
-                out.plan_us += us(tp1 - tp0);
-                if (!plan)
+                auto statement_txn = session_.statement_txn();
+                if (!statement_txn)
                 {
-                    out.error = plan.error().error_message;
-                    return out;
+                    return fail(statement_txn.error());
                 }
+                use_txn = *statement_txn;
+            }
 
-                if (popo::executor::needs_generic_executor(stmt) || popo::executor::plan_needs_generic_executor(*plan))
-                {
-                    popo::executor::Executor executor(schema_, engine_);
-                    auto executed = executor.execute(*plan, outer);
-                    auto tv1 = clock::now();
-                    out.vm_us += us(tv1 - tp1);
-                    if (!executed)
-                    {
-                        out.error = executed.error().error_message;
-                        return out;
-                    }
-                    out.result = std::move(*executed);
-                    continue;
-                }
-
-                auto compiled = compiler_.compile(*plan);
-                auto tc1 = clock::now();
-                out.compile_us += us(tc1 - tp1);
-                if (!compiled)
-                {
-                    out.error = compiled.error().error_message;
-                    return out;
-                }
-
-                auto executed = vm_.execute(*compiled, outer);
+            if (popo::executor::needs_generic_executor(stmt) || popo::executor::plan_needs_generic_executor(*plan))
+            {
+                popo::executor::Executor executor(schema_, engine_);
+                auto executed = executor.execute(*plan, use_txn);
                 auto tv1 = clock::now();
-                out.vm_us += us(tv1 - tc1);
+                out.vm_us += us(tv1 - tp1);
                 if (!executed)
                 {
-                    out.error = executed.error().error_message;
-                    return out;
+                    return fail(executed.error());
                 }
                 out.result = std::move(*executed);
+                if (own_session)
+                {
+                    auto succeeded = session_.statement_succeeded();
+                    if (!succeeded)
+                    {
+                        return fail(succeeded.error());
+                    }
+                }
+                continue;
             }
-            out.ok = true;
-            return out;
+
+            auto compiled = compiler_.compile(*plan);
+            auto tc1 = clock::now();
+            out.compile_us += us(tc1 - tp1);
+            if (!compiled)
+            {
+                return fail(compiled.error());
+            }
+
+            auto executed = vm_.execute(*compiled, use_txn);
+            auto tv1 = clock::now();
+            out.vm_us += us(tv1 - tc1);
+            if (!executed)
+            {
+                return fail(executed.error());
+            }
+            out.result = std::move(*executed);
+            if (own_session)
+            {
+                auto succeeded = session_.statement_succeeded();
+                if (!succeeded)
+                {
+                    return fail(succeeded.error());
+                }
+            }
         }
-        catch (const std::exception & ex)
-        {
-            out.error = ex.what();
-            return out;
-        }
+        return out;
     }
 
     template <typename Dur>
@@ -165,51 +216,48 @@ private:
 
     popo::catalog::SchemaManager schema_;
     popo::storage::StorageEngine engine_;
+    popo::bytecode::TxnSession session_;
     popo::planner::Planner planner_;
     popo::bytecode::Compiler compiler_;
     popo::bytecode::VirtualMachine vm_;
+    std::optional<popo::base::Error> init_error_;
 };
 
-inline SqlTxn::SqlTxn(SqlRunner * runner)
-    : runner_(runner)
-    , txn_(runner->engine_.begin_txn())
-{
-}
+inline SqlTxn::SqlTxn(SqlRunner * runner) : runner_(runner) {}
 
 inline SqlTxn::~SqlTxn()
 {
-    if (txn_ != nullptr && runner_ != nullptr)
+    if (runner_ != nullptr)
     {
-        runner_->engine_.abort_txn(txn_);
-        txn_ = nullptr;
+        runner_->session_.rollback();
+        runner_ = nullptr;
     }
 }
 
 inline SqlResult SqlTxn::exec(const std::string & sql)
 {
-    if (txn_ == nullptr || runner_ == nullptr)
+    if (runner_ == nullptr)
     {
-        SqlResult out;
-        out.error = "transaction is closed";
-        return out;
+        return popo::base::make_error(popo::base::Errno::InvalidArg, "transaction is closed");
     }
-    SqlResult out = runner_->run(sql, txn_);
-    if (!out.ok)
+    SqlResult out = runner_->run(sql, nullptr);
+    if (!out)
     {
-        runner_->engine_.abort_txn(txn_);
-        txn_ = nullptr;
+        runner_->session_.rollback();
+        runner_ = nullptr;
     }
     return out;
 }
 
-inline void SqlTxn::commit()
+inline popo::base::Result<void> SqlTxn::commit()
 {
-    if (txn_ == nullptr || runner_ == nullptr)
+    if (runner_ == nullptr)
     {
-        throw std::runtime_error("transaction is closed");
+        return popo::base::make_error(popo::base::Errno::InvalidArg, "transaction is closed");
     }
-    runner_->engine_.commit_txn(txn_);
-    txn_ = nullptr;
+    auto committed = runner_->session_.commit();
+    runner_ = nullptr;
+    return committed;
 }
 
 } // namespace popo::test

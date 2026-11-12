@@ -1,9 +1,9 @@
 #include "bytecode/vm.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <variant>
 #include "parser/ast.h"
-#include "src/storage/row_serializer.h"
 #include "src/storage/storage_engine.h"
 #include "src/storage/table_heap.h"
 
@@ -260,7 +260,13 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
     result_.columns = program.result_columns;
 
     txn_ = own_txn_ ? engine_.begin_txn() : outer_txn;
+    engine_.mvcc()->begin_statement(txn_);
 
+    return run(program);
+}
+
+popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
+{
     while (pc_ < static_cast<int32_t>(program.instructions.size()))
     {
         const auto & inst = program.instructions[pc_];
@@ -293,46 +299,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Column opcode: invalid cursor"));
                 }
-                auto & cursor = it->second;
-                if (!cursor.row_materialized && !cursor.is_write)
-                {
-                    if (cursor.iter && cursor.iter->valid())
-                    {
-                        auto [data, len] = cursor.iter->current_bytes();
-                        push(popo::storage::RowSerializer::read_column(data, len, cursor.schema, inst.operand2));
-                        pc_++;
-                        break;
-                    }
-                    if (cursor.heap && cursor.has_current)
-                    {
-                        auto val = cursor.heap->read_column(cursor.current_rid, inst.operand2);
-                        if (!val.has_value())
-                        {
-                            return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Column opcode: row missing"));
-                        }
-                        push(*val);
-                        pc_++;
-                        break;
-                    }
-                }
-                if (!cursor.row_materialized)
-                {
-                    if (cursor.iter && cursor.iter->valid())
-                    {
-                        cursor.current_row_cache = cursor.iter->current_row();
-                    }
-                    else if (cursor.heap)
-                    {
-                        auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
-                        if (!tuple_opt.has_value())
-                        {
-                            return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Column opcode: row missing"));
-                        }
-                        cursor.current_row_cache = tuple_opt->deform(cursor.schema);
-                    }
-                    cursor.row_materialized = true;
-                }
-                auto & row = cursor.current_row_cache;
+                const auto & row = it->second.rows[it->second.pos];
                 if (inst.operand2 < 0 || inst.operand2 >= static_cast<int32_t>(row.values_.size()))
                 {
                     return error(
@@ -480,9 +447,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 std::string table_name = std::get<std::string>(program.constants[inst.operand2]);
                 Cursor c;
                 c.table_name = table_name;
-                c.is_write = (inst.op == OpCode::OpenWrite);
 
-                // Get table heap from storage engine
                 auto * heap = engine_.get_table_heap(table_name);
                 if (!heap)
                 {
@@ -501,8 +466,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 else
                 {
                     c.heap = heap;
-                    c.schema = heap->schema();
-                    c.iter = std::make_unique<popo::storage::TableIterator>(const_cast<popo::storage::TableHeap *>(heap), heap->schema());
+                    c.pk_col = heap->schema().primary_key_col_idx_;
                 }
                 cursors_[cursor_id] = std::move(c);
                 pc_++;
@@ -511,75 +475,30 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
 
             case OpCode::Rewind: {
                 auto it = cursors_.find(inst.operand1);
-                if (it == cursors_.end() || !it->second.iter)
+                if (it == cursors_.end() || !it->second.heap)
                 {
                     pc_ = inst.operand2;
                     break;
                 }
                 auto & cursor = it->second;
-                cursor.iter->rewind();
-                if (!cursor.iter->valid())
-                {
-                    pc_ = inst.operand2;
-                }
-                else
-                {
-                    cursor.current_rid = cursor.iter->current_row_id();
-                    cursor.row_materialized = false;
-                    cursor.has_current = true;
-                    pc_++;
-                }
+                cursor.rows = engine_.mvcc()->scan(txn_, cursor.table_name);
+                cursor.pos = 0;
+                cursor.has_current = !cursor.rows.empty();
+                pc_ = cursor.has_current ? pc_ + 1 : inst.operand2;
                 break;
             }
 
             case OpCode::Next: {
                 auto it = cursors_.find(inst.operand1);
-                if (it == cursors_.end() || !it->second.iter)
+                if (it == cursors_.end())
                 {
                     pc_++;
                     break;
                 }
                 auto & cursor = it->second;
-                if (cursor.index_scan)
-                {
-                    cursor.index_pos++;
-                    if (cursor.index_pos < cursor.index_hits.size() && cursor.heap)
-                    {
-                        cursor.current_rid = cursor.index_hits[cursor.index_pos];
-                        auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
-                        if (!tuple_opt)
-                        {
-                            cursor.has_current = false;
-                            cursor.index_scan = false;
-                            pc_++;
-                            break;
-                        }
-                        cursor.current_row_cache = tuple_opt->deform(cursor.schema);
-                        cursor.row_materialized = true;
-                        cursor.has_current = true;
-                        pc_ = inst.operand2;
-                    }
-                    else
-                    {
-                        cursor.has_current = false;
-                        cursor.index_scan = false;
-                        pc_++;
-                    }
-                    break;
-                }
-                cursor.iter->next();
-                if (cursor.iter->valid())
-                {
-                    cursor.current_rid = cursor.iter->current_row_id();
-                    cursor.row_materialized = false;
-                    cursor.has_current = true;
-                    pc_ = inst.operand2;
-                }
-                else
-                {
-                    cursor.has_current = false;
-                    pc_++;
-                }
+                cursor.pos++;
+                cursor.has_current = cursor.pos < cursor.rows.size();
+                pc_ = cursor.has_current ? inst.operand2 : pc_ + 1;
                 break;
             }
 
@@ -644,11 +563,10 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "InsertRow: no pending row"));
                 }
-                auto tuple = popo::storage::Tuple::form(it->second.schema, pending_row_.value());
-                auto rid = it->second.heap->insert_row(txn_, tuple);
-                if (!rid.is_valid())
+                auto staged = engine_.mvcc()->stage_insert(txn_, it->second.table_name, *pending_row_);
+                if (!staged)
                 {
-                    return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "InsertRow: insert failed"));
+                    return error(staged.error());
                 }
                 pending_row_.reset();
                 result_.rows_affected++;
@@ -658,12 +576,17 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
 
             case OpCode::DeleteRow: {
                 auto it = cursors_.find(inst.operand1);
-                if (it == cursors_.end() || !it->second.heap || !it->second.has_current)
+                if (it == cursors_.end() || !it->second.has_current || !it->second.heap)
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "DeleteRow: invalid cursor"));
                 }
                 auto & cursor = it->second;
-                cursor.heap->delete_row(txn_, cursor.current_rid);
+                const auto & row = cursor.rows[cursor.pos];
+                auto staged = engine_.mvcc()->stage_delete(txn_, cursor.table_name, cursor.heap->schema().extract_pk(row));
+                if (!staged)
+                {
+                    return error(staged.error());
+                }
                 result_.rows_affected++;
                 pc_++;
                 break;
@@ -671,12 +594,12 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
 
             case OpCode::UpdateRow: {
                 auto it = cursors_.find(inst.operand1);
-                if (it == cursors_.end() || !it->second.heap || !it->second.has_current)
+                if (it == cursors_.end() || !it->second.has_current || !it->second.heap)
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "UpdateRow: invalid cursor"));
                 }
                 auto & cursor = it->second;
-                popo::type::Row updated_row = cursor.current_row_cache;
+                popo::type::Row updated_row = cursor.rows[cursor.pos];
                 int32_t num_assigns = inst.operand2;
                 std::vector<std::pair<int32_t, popo::type::Value>> updates;
                 for (int i = 0; i < num_assigns; i++)
@@ -693,10 +616,34 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                         updated_row.values_[col_idx] = value;
                     }
                 }
-                auto new_tuple = popo::storage::Tuple::form(cursor.schema, updated_row);
-                auto new_rid = cursor.heap->update_row(txn_, cursor.current_rid, new_tuple);
+                const auto & schema = cursor.heap->schema();
+                auto old_pk = schema.extract_pk(cursor.rows[cursor.pos]);
+                auto new_pk = schema.extract_pk(updated_row);
+                if (!(new_pk == old_pk))
+                {
+                    // A new primary key is a different row: retire the old one and
+                    // buffer the replacement, matching the generic executor.
+                    auto deleted = engine_.mvcc()->stage_delete(txn_, cursor.table_name, old_pk);
+                    if (!deleted)
+                    {
+                        return error(deleted.error());
+                    }
+                    auto inserted = engine_.mvcc()->stage_insert(txn_, cursor.table_name, updated_row);
+                    if (!inserted)
+                    {
+                        return error(inserted.error());
+                    }
+                }
+                else
+                {
+                    auto updated = engine_.mvcc()->stage_update(txn_, cursor.table_name, new_pk, updated_row);
+                    if (!updated)
+                    {
+                        return error(updated.error());
+                    }
+                }
+                cursor.rows[cursor.pos] = std::move(updated_row);
                 result_.rows_affected++;
-                cursor.current_rid = new_rid;
                 pc_++;
                 break;
             }
@@ -704,26 +651,24 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             case OpCode::SeekGe: {
                 auto key = pop();
                 auto it = cursors_.find(inst.operand1);
-                if (it == cursors_.end() || !it->second.iter)
+                if (it == cursors_.end() || !it->second.heap)
                 {
                     pc_ = inst.operand2;
                     break;
                 }
                 auto & cursor = it->second;
-                cursor.index_scan = false;
-                cursor.iter->seek_ge(key);
-                if (!cursor.iter->valid())
+                cursor.rows = engine_.mvcc()->scan(txn_, cursor.table_name);
+                cursor.pos = 0;
+                if (cursor.pk_col >= 0)
                 {
-                    cursor.has_current = false;
-                    pc_ = inst.operand2;
+                    size_t pk = static_cast<size_t>(cursor.pk_col);
+                    while (cursor.pos < cursor.rows.size() && do_lt(cursor.rows[cursor.pos].values_[pk], key))
+                    {
+                        cursor.pos++;
+                    }
                 }
-                else
-                {
-                    cursor.current_rid = cursor.iter->current_row_id();
-                    cursor.row_materialized = false;
-                    cursor.has_current = true;
-                    pc_++;
-                }
+                cursor.has_current = cursor.pos < cursor.rows.size();
+                pc_ = cursor.has_current ? pc_ + 1 : inst.operand2;
                 break;
             }
 
@@ -736,39 +681,51 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     break;
                 }
                 auto & cursor = it->second;
-                auto pks = cursor.heap->lookup_index(static_cast<size_t>(inst.operand3), key);
-                cursor.index_hits.clear();
-                cursor.index_hits.reserve(pks.size());
-                for (const auto & pk : pks)
+                auto * mvcc = engine_.mvcc();
+                size_t ordinal = static_cast<size_t>(inst.operand3);
+                int32_t col = -1;
+                if (auto qr = schema_mgr_.query_table(cursor.table_name); qr && *qr && ordinal < (*qr)->indexes_.size())
                 {
-                    auto rid = cursor.heap->lookup_pk(pk);
-                    if (rid)
+                    const auto & cols = (*qr)->indexes_[ordinal].index_cols_;
+                    if (cols.size() == 1)
                     {
-                        cursor.index_hits.push_back(*rid);
+                        col = cols[0];
                     }
                 }
-                if (cursor.index_hits.empty())
+                auto matches = [&](const popo::type::Row & row)
+                { return col >= 0 && static_cast<size_t>(col) < row.values_.size() && do_eq(row.values_[static_cast<size_t>(col)], key); };
+
+                cursor.rows.clear();
+                cursor.pos = 0;
+                // The secondary index tracks the current committed heap, so it is only
+                // usable when this statement reads that same image. A stale snapshot,
+                // buffered writes or dirty reads all have to scan the version store.
+                if (col >= 0 && txn_->overlay().count(cursor.table_name) == 0 && mvcc->snapshot_csn_for(txn_) == mvcc->current_csn())
                 {
-                    cursor.index_scan = false;
-                    cursor.has_current = false;
-                    pc_ = inst.operand2;
-                    break;
+                    // The compiler emits no WHERE filter after an index seek, so a
+                    // phantom inserted by a concurrent commit has to be caught here.
+                    mvcc->note_read(txn_, cursor.table_name, std::nullopt, std::nullopt);
+                    for (const auto & pk : cursor.heap->lookup_index(ordinal, key))
+                    {
+                        auto row = mvcc->lookup(txn_, cursor.table_name, pk);
+                        if (row && matches(*row))
+                        {
+                            cursor.rows.push_back(std::move(*row));
+                        }
+                    }
                 }
-                cursor.index_scan = true;
-                cursor.index_pos = 0;
-                cursor.current_rid = cursor.index_hits[0];
-                auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
-                if (!tuple_opt)
+                else
                 {
-                    cursor.has_current = false;
-                    cursor.index_scan = false;
-                    pc_ = inst.operand2;
-                    break;
+                    for (auto & row : mvcc->scan(txn_, cursor.table_name))
+                    {
+                        if (matches(row))
+                        {
+                            cursor.rows.push_back(std::move(row));
+                        }
+                    }
                 }
-                cursor.current_row_cache = tuple_opt->deform(cursor.schema);
-                cursor.row_materialized = true;
-                cursor.has_current = true;
-                pc_++;
+                cursor.has_current = !cursor.rows.empty();
+                pc_ = cursor.has_current ? pc_ + 1 : inst.operand2;
                 break;
             }
 
@@ -783,11 +740,23 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::TableNotFound), "Table not found: " + table_name));
                 }
+                const std::string canonical_table = (*qr)->table_name_;
                 int32_t col = -1;
                 const auto & columns = (*qr)->columns_;
+                auto eq_ci = [](const std::string & a, const std::string & b)
+                {
+                    if (a.size() != b.size())
+                        return false;
+                    for (size_t k = 0; k < a.size(); ++k)
+                    {
+                        if (std::tolower(static_cast<unsigned char>(a[k])) != std::tolower(static_cast<unsigned char>(b[k])))
+                            return false;
+                    }
+                    return true;
+                };
                 for (size_t i = 0; i < columns.size(); ++i)
                 {
-                    if (columns[i].column_name_ == column_name)
+                    if (eq_ci(columns[i].column_name_, column_name))
                     {
                         col = static_cast<int32_t>(i);
                         break;
@@ -797,18 +766,15 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 {
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Column not found: " + column_name));
                 }
-                auto created = schema_mgr_.create_index(table_name, index_name, {col}, unique);
+                auto created = schema_mgr_.create_index(canonical_table, index_name, {col}, unique);
                 if (!created)
                 {
                     return error(created.error());
                 }
-                try
+                auto storage_created = engine_.create_index(canonical_table, index_name, col, unique);
+                if (!storage_created)
                 {
-                    engine_.create_index(table_name, index_name, col, unique);
-                }
-                catch (const std::exception & ex)
-                {
-                    return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), ex.what()));
+                    return error(storage_created.error());
                 }
                 result_.message = "Index created";
                 pc_++;
@@ -823,29 +789,17 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "SeekByPk: invalid cursor"));
                 }
                 auto & cursor = it->second;
-                auto rid_opt = cursor.heap->lookup_pk(pk_val);
-                if (!rid_opt.has_value())
+                auto row = engine_.mvcc()->lookup(txn_, cursor.table_name, pk_val);
+                cursor.rows.clear();
+                cursor.pos = 0;
+                cursor.has_current = row.has_value();
+                if (!row)
                 {
-                    // Row not found — jump to skip target (Close/Halt)
+                    // Row not visible — jump to skip target (Close/Halt)
                     pc_ = inst.operand2;
-                    cursor.has_current = false;
                     break;
                 }
-                cursor.current_rid = rid_opt.value();
-                cursor.has_current = true;
-                cursor.row_materialized = false;
-                if (cursor.is_write)
-                {
-                    auto tuple_opt = cursor.heap->get_row(cursor.current_rid);
-                    if (!tuple_opt.has_value())
-                    {
-                        cursor.has_current = false;
-                        pc_ = inst.operand2;
-                        break;
-                    }
-                    cursor.current_row_cache = tuple_opt->deform(cursor.schema);
-                    cursor.row_materialized = true;
-                }
+                cursor.rows.push_back(std::move(*row));
                 pc_++;
                 break;
             }
@@ -855,7 +809,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 int64_t n = 0;
                 if (it != cursors_.end() && it->second.heap)
                 {
-                    n = it->second.heap->count_rows();
+                    n = static_cast<int64_t>(engine_.mvcc()->scan(txn_, it->second.table_name).size());
                 }
                 push(popo::type::Value(popo::type::ValueType::Int64, n));
                 pc_++;
@@ -1136,7 +1090,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     col.is_unique_ = def.is_unique;
                     if (def.default_value.has_value())
                     {
-                        col.default_value_ = def.default_value.value();
+                        col.default_value_ = *def.default_value;
                     }
                     columns.push_back(col);
                 }
@@ -1149,7 +1103,11 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                 auto qr = schema_mgr_.query_table(table_name);
                 if (qr)
                 {
-                    engine_.create_table(table_name, *(*qr));
+                    auto storage_created = engine_.create_table(table_name, *(*qr));
+                    if (!storage_created)
+                    {
+                        return error(storage_created.error());
+                    }
                 }
                 result_.message = "Table created";
                 pc_++;
@@ -1170,12 +1128,13 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
                     }
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::TableNotFound), "Table not found: " + table_name));
                 }
-                auto del_result = schema_mgr_.delete_table(table_name);
+                const std::string canonical_table = (*qr)->table_name_;
+                auto del_result = schema_mgr_.delete_table(canonical_table);
                 if (!del_result)
                 {
                     return error(del_result.error());
                 }
-                engine_.drop_table(table_name);
+                engine_.drop_table(canonical_table);
                 result_.message = "Table dropped";
                 pc_++;
                 break;
@@ -1262,49 +1221,111 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
             }
 
             case OpCode::SelectSystemVar: {
-                std::string var_name = std::get<std::string>(program.constants[inst.operand1]);
+                std::string packed = std::get<std::string>(program.constants[inst.operand1]);
                 auto row = std::make_shared<popo::type::Row>();
-                if (var_name == "version_comment")
+                size_t begin = 0;
+                while (begin <= packed.size())
                 {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, "popo database"));
-                }
-                else if (var_name == "version")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, "0.1.0"));
-                }
-                else if (var_name == "max_allowed_packet")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::Int64, static_cast<int64_t>(16777216)));
-                }
-                else if (var_name == "autocommit")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::Int64, static_cast<int64_t>(1)));
-                }
-                else if (var_name == "sql_mode")
-                {
-                    row->append_value(
-                        popo::type::Value(
-                            popo::type::ValueType::String,
-                            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_"
-                            "SUBSTITUTION"));
-                }
-                else if (
-                    var_name == "character_set_client" || var_name == "character_set_connection" || var_name == "character_set_results"
-                    || var_name == "character_set_server")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, "utf8mb4"));
-                }
-                else if (var_name == "collation_connection" || var_name == "collation_server")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, "utf8mb4_general_ci"));
-                }
-                else if (var_name == "tx_isolation" || var_name == "transaction_isolation")
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, "READ-COMMITTED"));
-                }
-                else
-                {
-                    row->append_value(popo::type::Value(popo::type::ValueType::String, ""));
+                    size_t end = packed.find('\n', begin);
+                    std::string var_name = packed.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+                    bool global_scope = false;
+                    auto dot = var_name.rfind('.');
+                    if (dot != std::string::npos)
+                    {
+                        std::string prefix = var_name.substr(0, dot);
+                        for (char & ch : prefix)
+                        {
+                            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                        }
+                        global_scope = prefix == "global";
+                        var_name = var_name.substr(dot + 1);
+                    }
+                    for (char & ch : var_name)
+                    {
+                        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    }
+                    auto text = [&](const char * value)
+                    { row->append_value(popo::type::Value(popo::type::ValueType::String, value)); };
+                    auto number = [&](int64_t value)
+                    { row->append_value(popo::type::Value(popo::type::ValueType::Int64, value)); };
+                    if (var_name == "version_comment")
+                    {
+                        text("PopoDB");
+                    }
+                    else if (var_name == "version")
+                    {
+                        text("5.7.42-popodb");
+                    }
+                    else if (var_name == "max_allowed_packet")
+                    {
+                        number(16777216);
+                    }
+                    else if (var_name == "autocommit")
+                    {
+                        number(session_ != nullptr && !session_->autocommit() ? 0 : 1);
+                    }
+                    else if (var_name == "sql_mode")
+                    {
+                        text("ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_"
+                             "SUBSTITUTION");
+                    }
+                    else if (
+                        var_name == "character_set_client" || var_name == "character_set_connection" || var_name == "character_set_results"
+                        || var_name == "character_set_server")
+                    {
+                        text("utf8mb4");
+                    }
+                    else if (var_name == "collation_connection" || var_name == "collation_server")
+                    {
+                        text("utf8mb4_general_ci");
+                    }
+                    else if (var_name == "tx_isolation" || var_name == "transaction_isolation")
+                    {
+                        auto level = session_ != nullptr && !global_scope ? session_->isolation()
+                                                                          : to_sql_isolation(engine_.default_isolation());
+                        text(popo::parser::isolation_level_name(level));
+                    }
+                    else if (var_name == "auto_increment_increment")
+                    {
+                        number(1);
+                    }
+                    else if (var_name == "license")
+                    {
+                        text("GPL");
+                    }
+                    else if (var_name == "lower_case_table_names")
+                    {
+                        number(0);
+                    }
+                    else if (var_name == "net_buffer_length")
+                    {
+                        number(16384);
+                    }
+                    else if (var_name == "net_write_timeout" || var_name == "interactive_timeout" || var_name == "wait_timeout")
+                    {
+                        number(var_name == "net_write_timeout" ? 60 : 28800);
+                    }
+                    else if (var_name == "system_time_zone")
+                    {
+                        text("UTC");
+                    }
+                    else if (var_name == "time_zone")
+                    {
+                        text("SYSTEM");
+                    }
+                    else if (var_name == "init_connect")
+                    {
+                        text("");
+                    }
+                    else
+                    {
+                        text("");
+                    }
+                    if (end == std::string::npos)
+                    {
+                        break;
+                    }
+                    begin = end + 1;
                 }
                 result_.rows.push_back(row);
                 pc_++;
@@ -1335,7 +1356,13 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::execute(const Program & progr
 done:
     if (own_txn_ && txn_)
     {
-        engine_.commit_txn(txn_);
+        auto * open = txn_;
+        txn_ = nullptr;
+        auto committed = engine_.commit_txn(open);
+        if (!committed)
+        {
+            return std::unexpected(committed.error());
+        }
     }
     txn_ = nullptr;
     if (!result_.rows.empty())

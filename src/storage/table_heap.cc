@@ -194,7 +194,8 @@ popo::type::Value TableHeap::extract_pk_from_serialized(const char * data, uint1
     int32_t pk_idx = schema_.primary_key_col_idx_;
     if (pk_idx < 0)
     {
-        return popo::type::Value();
+        auto row = RowSerializer::deserialize(data, len, schema_);
+        return schema_.extract_pk(row);
     }
 
     // Fast path: extract a fixed-width PK column directly from serialized bytes
@@ -272,7 +273,7 @@ int TableHeap::compare_pk(const popo::type::Value & a, const popo::type::Value &
     int32_t pk_idx = schema_.primary_key_col_idx_;
     if (pk_idx < 0 || pk_idx >= static_cast<int32_t>(schema_.columns_.size()))
     {
-        return 0;
+        return compare_as(popo::type::ValueType::String, a, b);
     }
     return compare_as(schema_.columns_[pk_idx].data_type_, a, b);
 }
@@ -427,16 +428,7 @@ page_id_t TableHeap::search_leaf_bytes(const char * data, uint16_t len, std::vec
 page_id_t TableHeap::search_leaf_with_path(const popo::type::Value & pk, std::vector<page_id_t> & path) const
 {
     popo::type::Row key_row;
-    int32_t ncols = static_cast<int32_t>(schema_.columns_.size());
-    int32_t pk_idx = schema_.primary_key_col_idx_;
-    key_row.reserve_values(static_cast<size_t>(ncols));
-    for (int32_t i = 0; i < ncols; ++i)
-    {
-        if (i == pk_idx)
-            key_row.append_value(pk);
-        else
-            key_row.append_value(popo::type::Value());
-    }
+    schema_.fill_pk_row(pk, key_row);
     auto key = Tuple::form(schema_, key_row);
     return search_leaf_bytes(key.data(), key.size(), path);
 }
@@ -618,7 +610,7 @@ std::pair<slot_id_t, page_id_t> TableHeap::btree_insert(const char * data, uint1
     if (slot_opt.has_value())
     {
         leaf_guard.mark_dirty();
-        return {slot_opt.value(), leaf_pid};
+        return {*slot_opt, leaf_pid};
     }
 
     // Leaf is full — split it
@@ -759,31 +751,34 @@ RowId TableHeap::insert_row(popo::txn::Transaction * txn, const Tuple & tuple)
     }
 
     // Write redo log
-    LogRecord record;
-    record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
-    record.type = LogType::INSERT;
-    record.table_name = table_name_;
-    record.page_id = leaf_pid;
-    record.slot_id = slot;
-    record.new_data = serialized;
-
-    lsn_t lsn = redo_log_->append(record);
-
-    // Update page LSN
+    if (log_wal_)
     {
-        auto guard = buffer_pool_->fetch_page(table_name_, leaf_pid);
-        if (guard.is_valid())
+        LogRecord record;
+        record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
+        record.type = LogType::INSERT;
+        record.table_name = table_name_;
+        record.page_id = leaf_pid;
+        record.slot_id = slot;
+        record.new_data = serialized;
+
+        lsn_t lsn = redo_log_->append(record);
+
+        // Update page LSN
         {
-            auto * page = reinterpret_cast<DataPage *>(guard.data());
-            page->header()->lsn = lsn;
-            guard.mark_dirty();
+            auto guard = buffer_pool_->fetch_page(table_name_, leaf_pid);
+            if (guard.is_valid())
+            {
+                auto * page = reinterpret_cast<DataPage *>(guard.data());
+                page->header()->lsn = lsn;
+                guard.mark_dirty();
+            }
         }
-    }
 
-    if (txn)
-    {
-        record.lsn = lsn;
-        txn->add_to_write_set(record);
+        if (txn)
+        {
+            record.lsn = lsn;
+            txn->add_to_write_set(record);
+        }
     }
 
     if (!indexes_.empty() && !sync_indexes_insert(tuple, pk))
@@ -826,25 +821,28 @@ bool TableHeap::delete_row(popo::txn::Transaction * txn, RowId rid)
     }
 
     // Write redo log
-    LogRecord record;
-    record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
-    record.type = LogType::DELETE;
-    record.table_name = table_name_;
-    record.page_id = rid.page_id;
-    record.slot_id = rid.slot_id;
-    record.old_data = std::move(old_data);
-
-    lsn_t lsn = redo_log_->append(record);
-    page->header()->lsn = lsn;
-    guard.mark_dirty();
-
-    if (txn)
+    if (log_wal_)
     {
-        record.lsn = lsn;
-        txn->add_to_write_set(record);
+        LogRecord record;
+        record.txn_id = txn ? txn->txn_id() : INVALID_TXN_ID;
+        record.type = LogType::DELETE;
+        record.table_name = table_name_;
+        record.page_id = rid.page_id;
+        record.slot_id = rid.slot_id;
+        record.old_data = old_data;
+
+        lsn_t lsn = redo_log_->append(record);
+        page->header()->lsn = lsn;
+        guard.mark_dirty();
+
+        if (txn)
+        {
+            record.lsn = lsn;
+            txn->add_to_write_set(record);
+        }
     }
 
-    sync_indexes_delete(record.old_data.data(), static_cast<uint16_t>(record.old_data.size()));
+    sync_indexes_delete(old_data.data(), static_cast<uint16_t>(old_data.size()));
     ahi_.clear();
     return true;
 }
@@ -908,7 +906,8 @@ RowId TableHeap::update_row(popo::txn::Transaction * txn, RowId rid, const Tuple
             }
             if (ok)
             {
-                pool->flush_all();
+                // Dirty pages stay in the pool: redo is the durability point, so
+                // publishing them here would only add a barrier to every update.
                 disk->commit_txn();
             }
             else
@@ -937,7 +936,7 @@ RowId TableHeap::update_row(popo::txn::Transaction * txn, RowId rid, const Tuple
                 record.type = LogType::UPDATE;
                 record.table_name = table_name_;
                 record.page_id = rid.page_id;
-                record.slot_id = updated.value();
+                record.slot_id = *updated;
                 record.old_data = old_data;
                 record.new_data = serialized;
                 lsn_t lsn = redo_log_->append(record);
@@ -951,7 +950,7 @@ RowId TableHeap::update_row(popo::txn::Transaction * txn, RowId rid, const Tuple
                 sync_indexes_update(old_data.data(), static_cast<uint16_t>(old_data.size()), tuple);
                 ahi_.clear();
                 commit_guard.ok = true;
-                return RowId{rid.page_id, updated.value()};
+                return RowId{rid.page_id, *updated};
             }
         }
     }
@@ -1005,7 +1004,7 @@ RowId TableHeap::update_row(popo::txn::Transaction * txn, RowId rid, const Tuple
         {
             if (auto updated = copied->update_tuple(rid.slot_id, serialized.data(), data_len); updated.has_value())
             {
-                new_slot = updated.value();
+                new_slot = *updated;
                 rewritten = true;
             }
         }
@@ -1582,7 +1581,7 @@ std::vector<popo::type::Value> TableHeap::lookup_prefix(const popo::type::Value 
 
 void TableHeap::attach_index(std::string name, int32_t column, bool unique, std::unique_ptr<TableHeap> tree)
 {
-    if (schema_.primary_key_col_idx_ >= 0)
+    if (!schema_.columns_.empty())
     {
         auto scan = iter();
         while (scan.valid())
@@ -1590,7 +1589,7 @@ void TableHeap::attach_index(std::string name, int32_t column, bool unique, std:
             auto row = scan.current_row();
             if (column >= 0 && column < static_cast<int32_t>(row.values_.size()))
             {
-                tree->insert_entry(row.values_[static_cast<size_t>(column)], row.values_[static_cast<size_t>(schema_.primary_key_col_idx_)]);
+                tree->insert_entry(row.values_[static_cast<size_t>(column)], schema_.extract_pk(row));
             }
             scan.next();
         }
@@ -1663,16 +1662,12 @@ bool TableHeap::sync_indexes_insert(const Tuple & tuple, const popo::type::Value
 
 void TableHeap::sync_indexes_delete(const char * data, uint16_t len)
 {
-    if (indexes_.empty() || schema_.primary_key_col_idx_ < 0)
+    if (indexes_.empty() || schema_.columns_.empty())
     {
         return;
     }
     auto row = RowSerializer::deserialize(data, len, schema_);
-    if (schema_.primary_key_col_idx_ >= static_cast<int32_t>(row.values_.size()))
-    {
-        return;
-    }
-    const auto & pk = row.values_[static_cast<size_t>(schema_.primary_key_col_idx_)];
+    const auto pk = schema_.extract_pk(row);
     for (auto & index : indexes_)
     {
         if (!index.tree || index.column < 0 || index.column >= static_cast<int32_t>(row.values_.size()))

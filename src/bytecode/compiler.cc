@@ -1,6 +1,5 @@
 #include "bytecode/compiler.h"
 #include <format>
-#include <stdexcept>
 
 namespace popo::bytecode
 {
@@ -19,53 +18,40 @@ popo::base::Result<Program> Compiler::compile(const popo::planner::PlanNodePtr &
     agg_expr_to_index_.clear();
     in_agg_step_context_ = false;
 
-    try
+    auto compiled = compile_node(plan);
+    if (!compiled)
     {
-        compile_node(plan);
-        return program_;
+        return std::unexpected(compiled.error());
     }
-    catch (const std::exception & e)
-    {
-        return std::unexpected(Error{popo::base::Unknown, e.what()});
-    }
+    return program_;
 }
 
-void Compiler::compile_node(const popo::planner::PlanNodePtr & node)
+popo::base::Result<void> Compiler::compile_node(const popo::planner::PlanNodePtr & node)
 {
     if (!node)
-        return;
+        return {};
     switch (node->type)
     {
         case popo::planner::PlanNodeType::Scan:
-            compile_scan(static_cast<const popo::planner::ScanNode &>(*node));
-            break;
+            return compile_scan(static_cast<const popo::planner::ScanNode &>(*node));
         case popo::planner::PlanNodeType::Filter:
-            compile_filter(static_cast<const popo::planner::FilterNode &>(*node));
-            break;
+            return compile_filter(static_cast<const popo::planner::FilterNode &>(*node));
         case popo::planner::PlanNodeType::Project:
-            compile_project(static_cast<const popo::planner::ProjectNode &>(*node));
-            break;
+            return compile_project(static_cast<const popo::planner::ProjectNode &>(*node));
         case popo::planner::PlanNodeType::Join:
-            compile_join(static_cast<const popo::planner::JoinNode &>(*node));
-            break;
+            return compile_join(static_cast<const popo::planner::JoinNode &>(*node));
         case popo::planner::PlanNodeType::Agg:
-            compile_agg(static_cast<const popo::planner::AggNode &>(*node));
-            break;
+            return compile_agg(static_cast<const popo::planner::AggNode &>(*node));
         case popo::planner::PlanNodeType::Sort:
-            compile_sort(static_cast<const popo::planner::SortNode &>(*node));
-            break;
+            return compile_sort(static_cast<const popo::planner::SortNode &>(*node));
         case popo::planner::PlanNodeType::Limit:
-            compile_limit(static_cast<const popo::planner::LimitNode &>(*node));
-            break;
+            return compile_limit(static_cast<const popo::planner::LimitNode &>(*node));
         case popo::planner::PlanNodeType::Insert:
-            compile_insert(static_cast<const popo::planner::InsertNode &>(*node));
-            break;
+            return compile_insert(static_cast<const popo::planner::InsertNode &>(*node));
         case popo::planner::PlanNodeType::Update:
-            compile_update(static_cast<const popo::planner::UpdateNode &>(*node));
-            break;
+            return compile_update(static_cast<const popo::planner::UpdateNode &>(*node));
         case popo::planner::PlanNodeType::Delete:
-            compile_delete(static_cast<const popo::planner::DeleteNode &>(*node));
-            break;
+            return compile_delete(static_cast<const popo::planner::DeleteNode &>(*node));
         case popo::planner::PlanNodeType::CreateTable:
             compile_create_table(static_cast<const popo::planner::CreateTableNode &>(*node));
             break;
@@ -100,15 +86,20 @@ void Compiler::compile_node(const popo::planner::PlanNodePtr & node)
             compile_select_system_var(static_cast<const popo::planner::SelectSystemVarNode &>(*node));
             break;
     }
+    return {};
 }
 
-void Compiler::compile_scan(const popo::planner::ScanNode & node)
+popo::base::Result<void> Compiler::compile_scan(const popo::planner::ScanNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     program_.emit(OpCode::OpenRead, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(node.table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         cursor_schemas_[cursor] = *qr;
@@ -132,48 +123,53 @@ void Compiler::compile_scan(const popo::planner::ScanNode & node)
     program_.patch_jump_operand2(rewind_inst, end_pos);
     program_.emit(OpCode::Close, cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_filter(const popo::planner::FilterNode & node)
+popo::base::Result<void> Compiler::compile_filter(const popo::planner::FilterNode & node)
 {
-    compile_node(node.child);
+    return compile_node(node.child);
 }
 
-void Compiler::compile_project(const popo::planner::ProjectNode & node)
+popo::base::Result<void> Compiler::compile_project(const popo::planner::ProjectNode & node)
 {
-    compile_select(node);
+    return compile_select(node);
 }
 
-void Compiler::compile_join(const popo::planner::JoinNode & node)
+popo::base::Result<void> Compiler::compile_join(const popo::planner::JoinNode & node)
 {
     SelectPipeline pipe;
     pipe.join = &node;
     pipe.project = nullptr;
-    compile_select_pipeline(pipe);
+    return compile_select_pipeline(pipe);
 }
 
-void Compiler::compile_agg(const popo::planner::AggNode & node)
+popo::base::Result<void> Compiler::compile_agg(const popo::planner::AggNode & node)
 {
-    compile_node(node.child);
+    return compile_node(node.child);
 }
 
-void Compiler::compile_sort(const popo::planner::SortNode & node)
+popo::base::Result<void> Compiler::compile_sort(const popo::planner::SortNode & node)
 {
-    compile_node(node.child);
+    return compile_node(node.child);
 }
 
-void Compiler::compile_limit(const popo::planner::LimitNode & node)
+popo::base::Result<void> Compiler::compile_limit(const popo::planner::LimitNode & node)
 {
-    compile_node(node.child);
+    return compile_node(node.child);
 }
 
-void Compiler::compile_insert(const popo::planner::InsertNode & node)
+popo::base::Result<void> Compiler::compile_insert(const popo::planner::InsertNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     program_.emit(OpCode::OpenWrite, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(node.table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         cursor_schemas_[cursor] = *qr;
@@ -183,7 +179,7 @@ void Compiler::compile_insert(const popo::planner::InsertNode & node)
     {
         for (const auto & expr : row_values)
         {
-            compile_expr(expr);
+            POPO_TRY(compile_expr(expr));
         }
         program_.emit(OpCode::MakeRow, static_cast<int32_t>(row_values.size()));
         program_.emit(OpCode::InsertRow, cursor);
@@ -191,15 +187,20 @@ void Compiler::compile_insert(const popo::planner::InsertNode & node)
 
     program_.emit(OpCode::Close, cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_update(const popo::planner::UpdateNode & node)
+popo::base::Result<void> Compiler::compile_update(const popo::planner::UpdateNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     program_.emit(OpCode::OpenWrite, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(node.table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         cursor_schemas_[cursor] = *qr;
@@ -210,7 +211,7 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
     auto pk_eq = detect_pk_equality(node.where_clause, cursor);
     if (pk_eq.has_value())
     {
-        auto [_, pk_col_idx, pk_value] = pk_eq.value();
+        auto [_, pk_col_idx, pk_value] = *pk_eq;
         // Push PK literal value onto stack for SeekByPk
         program_.emit(OpCode::Const, program_.add_constant(pk_value));
         // SeekByPk(cursor, skip_target) — jump to Close/Halt if not found
@@ -222,10 +223,11 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
             int32_t col_idx = find_column_index(cursor, assign.column_name);
             if (col_idx < 0)
             {
-                throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
+                return popo::base::make_error(
+                    popo::base::Unknown, std::format("Column '{}' not found", assign.column_name));
             }
             program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
-            compile_expr(assign.value);
+            POPO_TRY(compile_expr(assign.value));
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
 
@@ -233,7 +235,7 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
         program_.patch_jump_operand2(seek_inst, end_pos);
         program_.emit(OpCode::Close, cursor);
         program_.emit(OpCode::Halt);
-        return;
+        return {};
     }
 
     // Fallback: full table scan with Rewind→Next loop
@@ -242,7 +244,7 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
 
     if (node.where_clause)
     {
-        compile_expr(node.where_clause);
+        POPO_TRY(compile_expr(node.where_clause));
         int32_t skip_jump = program_.emit(OpCode::JumpIfFalse, 0);
 
         for (const auto & assign : node.assignments)
@@ -250,10 +252,11 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
             int32_t col_idx = find_column_index(cursor, assign.column_name);
             if (col_idx < 0)
             {
-                throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
+                return popo::base::make_error(
+                    popo::base::Unknown, std::format("Column '{}' not found", assign.column_name));
             }
             program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
-            compile_expr(assign.value);
+            POPO_TRY(compile_expr(assign.value));
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
 
@@ -267,10 +270,11 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
             int32_t col_idx = find_column_index(cursor, assign.column_name);
             if (col_idx < 0)
             {
-                throw std::runtime_error(std::format("Column '{}' not found", assign.column_name));
+                return popo::base::make_error(
+                    popo::base::Unknown, std::format("Column '{}' not found", assign.column_name));
             }
             program_.emit(OpCode::Const, program_.add_constant(popo::type::Value(popo::type::ValueType::Int32, col_idx)));
-            compile_expr(assign.value);
+            POPO_TRY(compile_expr(assign.value));
         }
         program_.emit(OpCode::UpdateRow, cursor, static_cast<int32_t>(node.assignments.size()));
     }
@@ -282,15 +286,20 @@ void Compiler::compile_update(const popo::planner::UpdateNode & node)
     program_.patch_jump_operand2(rewind_inst, end_pos);
     program_.emit(OpCode::Close, cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_delete(const popo::planner::DeleteNode & node)
+popo::base::Result<void> Compiler::compile_delete(const popo::planner::DeleteNode & node)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(node.table_name);
     program_.emit(OpCode::OpenWrite, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(node.table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         cursor_schemas_[cursor] = *qr;
@@ -301,7 +310,7 @@ void Compiler::compile_delete(const popo::planner::DeleteNode & node)
     auto pk_eq = detect_pk_equality(node.where_clause, cursor);
     if (pk_eq.has_value())
     {
-        auto [_, pk_col_idx, pk_value] = pk_eq.value();
+        auto [_, pk_col_idx, pk_value] = *pk_eq;
         program_.emit(OpCode::Const, program_.add_constant(pk_value));
         int32_t seek_inst = program_.emit(OpCode::SeekByPk, cursor, 0);
         program_.emit(OpCode::DeleteRow, cursor);
@@ -309,7 +318,7 @@ void Compiler::compile_delete(const popo::planner::DeleteNode & node)
         program_.patch_jump_operand2(seek_inst, end_pos);
         program_.emit(OpCode::Close, cursor);
         program_.emit(OpCode::Halt);
-        return;
+        return {};
     }
 
     // Fallback: full table scan with Rewind->Next loop
@@ -318,7 +327,7 @@ void Compiler::compile_delete(const popo::planner::DeleteNode & node)
 
     if (node.where_clause)
     {
-        compile_expr(node.where_clause);
+        POPO_TRY(compile_expr(node.where_clause));
         int32_t skip_jump = program_.emit(OpCode::JumpIfFalse, 0);
         program_.emit(OpCode::DeleteRow, cursor);
         int32_t next_pos = program_.current_pos();
@@ -336,6 +345,7 @@ void Compiler::compile_delete(const popo::planner::DeleteNode & node)
     program_.patch_jump_operand2(rewind_inst, end_pos);
     program_.emit(OpCode::Close, cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
 void Compiler::compile_create_table(const popo::planner::CreateTableNode & node)
@@ -366,10 +376,10 @@ void Compiler::compile_drop_table(const popo::planner::DropTableNode & node)
     program_.emit(OpCode::Halt);
 }
 
-void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
+popo::base::Result<void> Compiler::compile_expr(const popo::parser::ExprPtr & expr)
 {
     if (!expr)
-        return;
+        return {};
     switch (expr->type)
     {
         case popo::parser::ExprType::Literal: {
@@ -380,7 +390,12 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
         }
         case popo::parser::ExprType::ColumnRef: {
             const auto & col = static_cast<const popo::parser::ColumnRefExpr &>(*expr);
-            auto [cursor_id, col_idx] = resolve_column(col.table_name, col.column_name);
+            auto resolved = resolve_column(col.table_name, col.column_name);
+            if (!resolved)
+            {
+                return std::unexpected(resolved.error());
+            }
+            auto [cursor_id, col_idx] = *resolved;
             program_.emit(OpCode::Column, cursor_id, col_idx);
             break;
         }
@@ -405,8 +420,8 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
         }
         case popo::parser::ExprType::BinaryOp: {
             const auto & bin = static_cast<const popo::parser::BinaryOpExpr &>(*expr);
-            compile_expr(bin.left);
-            compile_expr(bin.right);
+            POPO_TRY(compile_expr(bin.left));
+            POPO_TRY(compile_expr(bin.right));
             switch (bin.op)
             {
                 case popo::parser::BinaryOpType::Add:
@@ -446,13 +461,13 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
                     program_.emit(OpCode::Or);
                     break;
                 case popo::parser::BinaryOpType::Concat:
-                    throw std::runtime_error("|| is executed by the SQL interpreter");
+                    return popo::base::make_error(popo::base::Unknown, "|| is executed by the SQL interpreter");
             }
             break;
         }
         case popo::parser::ExprType::UnaryOp: {
             const auto & un = static_cast<const popo::parser::UnaryOpExpr &>(*expr);
-            compile_expr(un.operand);
+            POPO_TRY(compile_expr(un.operand));
             switch (un.op)
             {
                 case popo::parser::UnaryOpType::Not:
@@ -472,7 +487,7 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
                 int32_t agg_idx = (it != agg_expr_to_index_.end()) ? it->second : 0;
                 if (!func.args.empty())
                 {
-                    compile_expr(func.args[0]);
+                    POPO_TRY(compile_expr(func.args[0]));
                 }
                 else
                 {
@@ -489,23 +504,48 @@ void Compiler::compile_expr(const popo::parser::ExprPtr & expr)
             break;
         }
     }
+    return {};
 }
 
-std::pair<int32_t, int32_t> Compiler::resolve_column(const std::string & table_name, const std::string & col_name)
+popo::base::Result<std::pair<int32_t, int32_t>>
+Compiler::resolve_column(const std::string & table_name, const std::string & col_name)
 {
+    auto eq_ci = [](const std::string & a, const std::string & b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t k = 0; k < a.size(); ++k)
+        {
+            if (std::tolower(static_cast<unsigned char>(a[k])) != std::tolower(static_cast<unsigned char>(b[k])))
+                return false;
+        }
+        return true;
+    };
     if (!table_name.empty())
     {
         auto it = table_to_cursor_.find(table_name);
+        if (it == table_to_cursor_.end())
+        {
+            for (auto m = table_to_cursor_.begin(); m != table_to_cursor_.end(); ++m)
+            {
+                if (eq_ci(m->first, table_name))
+                {
+                    it = m;
+                    break;
+                }
+            }
+        }
         if (it != table_to_cursor_.end())
         {
             int32_t col_idx = find_column_index(it->second, col_name);
             if (col_idx < 0)
             {
-                throw std::runtime_error(std::format("Column '{}' not found in table '{}'", col_name, table_name));
+                return popo::base::make_error(
+                    popo::base::Unknown, std::format("Column '{}' not found in table '{}'", col_name, table_name));
             }
-            return {it->second, col_idx};
+            return std::pair{it->second, col_idx};
         }
-        throw std::runtime_error(std::format("Table '{}' not found", table_name));
+        return popo::base::make_error(popo::base::Unknown, std::format("Table '{}' not found", table_name));
     }
     else
     {
@@ -514,21 +554,32 @@ std::pair<int32_t, int32_t> Compiler::resolve_column(const std::string & table_n
             int32_t col_idx = find_column_index(cursor_id, col_name);
             if (col_idx >= 0)
             {
-                return {cursor_id, col_idx};
+                return std::pair{cursor_id, col_idx};
             }
         }
-        throw std::runtime_error(std::format("Column '{}' not found", col_name));
+        return popo::base::make_error(popo::base::Unknown, std::format("Column '{}' not found", col_name));
     }
 }
 
 int32_t Compiler::find_column_index(int32_t cursor_id, const std::string & col_name)
 {
+    auto eq_ci = [](const std::string & a, const std::string & b)
+    {
+        if (a.size() != b.size())
+            return false;
+        for (size_t k = 0; k < a.size(); ++k)
+        {
+            if (std::tolower(static_cast<unsigned char>(a[k])) != std::tolower(static_cast<unsigned char>(b[k])))
+                return false;
+        }
+        return true;
+    };
     auto it = cursor_schemas_.find(cursor_id);
     if (it != cursor_schemas_.end() && it->second)
     {
         for (size_t i = 0; i < it->second->columns_.size(); ++i)
         {
-            if (it->second->columns_[i].column_name_ == col_name)
+            if (eq_ci(it->second->columns_[i].column_name_, col_name))
             {
                 return static_cast<int32_t>(i);
             }
@@ -744,7 +795,7 @@ void Compiler::emit_all_columns(int32_t cursor_id)
     }
 }
 
-void Compiler::open_table_cursor(const std::string & table_name, bool for_write)
+popo::base::Result<void> Compiler::open_table_cursor(const std::string & table_name, bool for_write)
 {
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(table_name);
@@ -757,19 +808,24 @@ void Compiler::open_table_cursor(const std::string & table_name, bool for_write)
         program_.emit(OpCode::OpenRead, cursor, table_name_idx);
     }
     auto qr = schema_mgr_.query_table(table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         cursor_schemas_[cursor] = *qr;
         table_to_cursor_[table_name] = cursor;
     }
+    return {};
 }
 
-void Compiler::compile_select(const popo::planner::ProjectNode & project)
+popo::base::Result<void> Compiler::compile_select(const popo::planner::ProjectNode & project)
 {
     SelectPipeline pipe;
     pipe.project = &project;
     analyze_select_pipeline(project.child, pipe);
-    compile_select_pipeline(pipe);
+    return compile_select_pipeline(pipe);
 }
 
 void Compiler::analyze_select_pipeline(const popo::planner::PlanNodePtr & node, SelectPipeline & pipe)
@@ -821,24 +877,21 @@ void Compiler::analyze_select_pipeline(const popo::planner::PlanNodePtr & node, 
     }
 }
 
-void Compiler::compile_select_pipeline(const SelectPipeline & pipe)
+popo::base::Result<void> Compiler::compile_select_pipeline(const SelectPipeline & pipe)
 {
     if (pipe.join)
     {
-        compile_select_with_join(pipe);
+        return compile_select_with_join(pipe);
     }
     else if (pipe.agg)
     {
-        compile_select_with_agg(pipe);
+        return compile_select_with_agg(pipe);
     }
     else if (pipe.sort)
     {
-        compile_select_with_sort(pipe);
+        return compile_select_with_sort(pipe);
     }
-    else
-    {
-        compile_select_simple(pipe);
-    }
+    return compile_select_simple(pipe);
 }
 
 int32_t Compiler::resolve_project_columns(const std::vector<popo::parser::ExprPtr> & exprs, std::vector<std::string> & out_names)
@@ -930,16 +983,20 @@ int32_t Compiler::resolve_project_columns(const std::vector<popo::parser::ExprPt
     return count;
 }
 
-void Compiler::compile_select_simple(const SelectPipeline & pipe)
+popo::base::Result<void> Compiler::compile_select_simple(const SelectPipeline & pipe)
 {
     if (!pipe.scan)
-        return;
+        return {};
 
     int32_t cursor = alloc_cursor();
     int32_t table_name_idx = program_.add_string_constant(pipe.scan->table_name);
     program_.emit(OpCode::OpenRead, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(pipe.scan->table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         auto schema = *qr;
@@ -970,14 +1027,14 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
         auto pk_eq = detect_pk_equality(pipe.where_filters[0]->condition, cursor);
         if (pk_eq.has_value())
         {
-            auto pk_value = std::get<2>(pk_eq.value());
+            auto pk_value = std::get<2>(*pk_eq);
             program_.emit(OpCode::Const, program_.add_constant(pk_value));
             int32_t seek_inst = program_.emit(OpCode::SeekByPk, cursor, 0);
             if (pipe.project)
             {
                 for (const auto & expr : pipe.project->expressions)
                 {
-                    compile_expr(expr);
+                    POPO_TRY(compile_expr(expr));
                 }
                 program_.emit(OpCode::ResultRow, num_output_cols);
             }
@@ -992,7 +1049,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
             program_.patch_jump_operand2(seek_inst, end_pos);
             program_.emit(OpCode::Close, cursor);
             program_.emit(OpCode::Halt);
-            return;
+            return {};
         }
 
         auto indexed = detect_index_equality(pipe.where_filters[0]->condition, cursor);
@@ -1005,7 +1062,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
             {
                 for (const auto & expr : pipe.project->expressions)
                 {
-                    compile_expr(expr);
+                    POPO_TRY(compile_expr(expr));
                 }
                 program_.emit(OpCode::ResultRow, num_output_cols);
             }
@@ -1021,7 +1078,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
             program_.patch_jump_operand2(seek_inst, end_pos);
             program_.emit(OpCode::Close, cursor);
             program_.emit(OpCode::Halt);
-            return;
+            return {};
         }
     }
 
@@ -1073,14 +1130,14 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
     {
         for (const auto * f : pipe.where_filters)
         {
-            compile_expr(f->condition);
+            POPO_TRY(compile_expr(f->condition));
             filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
         }
     }
 
     if (pipe.having)
     {
-        compile_expr(pipe.having->condition);
+        POPO_TRY(compile_expr(pipe.having->condition));
         filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
     }
 
@@ -1088,7 +1145,7 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
     {
         for (const auto & expr : pipe.project->expressions)
         {
-            compile_expr(expr);
+            POPO_TRY(compile_expr(expr));
         }
         program_.emit(OpCode::ResultRow, num_output_cols);
     }
@@ -1128,12 +1185,13 @@ void Compiler::compile_select_simple(const SelectPipeline & pipe)
     }
     program_.emit(OpCode::Close, cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
+popo::base::Result<void> Compiler::compile_select_with_sort(const SelectPipeline & pipe)
 {
     if (!pipe.scan || !pipe.sort)
-        return;
+        return {};
 
     int32_t sorter = alloc_sorter();
     int32_t num_sort_keys = static_cast<int32_t>(pipe.sort->order_by.size());
@@ -1150,6 +1208,10 @@ void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
     program_.emit(OpCode::OpenRead, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(pipe.scan->table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         auto schema = *qr;
@@ -1181,20 +1243,20 @@ void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
     std::vector<int32_t> filter_jumps;
     for (const auto * f : pipe.where_filters)
     {
-        compile_expr(f->condition);
+        POPO_TRY(compile_expr(f->condition));
         filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
     }
 
     for (const auto & order : pipe.sort->order_by)
     {
-        compile_expr(order.expr);
+        POPO_TRY(compile_expr(order.expr));
     }
 
     if (pipe.project)
     {
         for (const auto & expr : pipe.project->expressions)
         {
-            compile_expr(expr);
+            POPO_TRY(compile_expr(expr));
         }
     }
     else
@@ -1253,12 +1315,13 @@ void Compiler::compile_select_with_sort(const SelectPipeline & pipe)
         program_.patch_jump(limit_jump, end_sorted_pos);
     }
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
+popo::base::Result<void> Compiler::compile_select_with_agg(const SelectPipeline & pipe)
 {
     if (!pipe.agg || !pipe.scan)
-        return;
+        return {};
 
     agg_expr_to_index_.clear();
     for (size_t i = 0; i < pipe.agg->agg_exprs.size(); ++i)
@@ -1273,6 +1336,10 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     program_.emit(OpCode::OpenRead, cursor, table_name_idx);
 
     auto qr = schema_mgr_.query_table(pipe.scan->table_name);
+    if (!qr)
+    {
+        return std::unexpected(qr.error());
+    }
     if (qr && *qr)
     {
         auto schema = *qr;
@@ -1311,7 +1378,7 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
             program_.emit(OpCode::ResultRow, 1);
             program_.emit(OpCode::Close, cursor);
             program_.emit(OpCode::Halt);
-            return;
+            return {};
         }
     }
 
@@ -1321,7 +1388,7 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     std::vector<int32_t> filter_jumps;
     for (const auto * f : pipe.where_filters)
     {
-        compile_expr(f->condition);
+        POPO_TRY(compile_expr(f->condition));
         filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
     }
 
@@ -1334,7 +1401,7 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
             const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*expr);
             if (!func.args.empty())
             {
-                compile_expr(func.args[0]);
+                POPO_TRY(compile_expr(func.args[0]));
             }
             else
             {
@@ -1360,7 +1427,7 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     {
         for (const auto & expr : pipe.project->expressions)
         {
-            compile_expr(expr);
+            POPO_TRY(compile_expr(expr));
         }
         program_.emit(OpCode::ResultRow, num_output_cols);
     }
@@ -1374,12 +1441,13 @@ void Compiler::compile_select_with_agg(const SelectPipeline & pipe)
     }
 
     program_.emit(OpCode::Halt);
+    return {};
 }
 
-void Compiler::compile_select_with_join(const SelectPipeline & pipe)
+popo::base::Result<void> Compiler::compile_select_with_join(const SelectPipeline & pipe)
 {
     if (!pipe.join)
-        return;
+        return {};
 
     int32_t left_cursor = alloc_cursor();
     const popo::planner::ScanNode * left_scan = nullptr;
@@ -1389,13 +1457,17 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     }
     if (!left_scan)
     {
-        return;
+        return {};
     }
 
     int32_t left_table_idx = program_.add_string_constant(left_scan->table_name);
     program_.emit(OpCode::OpenRead, left_cursor, left_table_idx);
     popo::catalog::SchemaRef left_schema;
     auto qr_left = schema_mgr_.query_table(left_scan->table_name);
+    if (!qr_left)
+    {
+        return std::unexpected(qr_left.error());
+    }
     if (qr_left && *qr_left)
     {
         left_schema = *qr_left;
@@ -1415,13 +1487,17 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     }
     if (!right_scan)
     {
-        return;
+        return {};
     }
 
     int32_t right_table_idx = program_.add_string_constant(right_scan->table_name);
     program_.emit(OpCode::OpenRead, right_cursor, right_table_idx);
     popo::catalog::SchemaRef right_schema;
     auto qr_right = schema_mgr_.query_table(right_scan->table_name);
+    if (!qr_right)
+    {
+        return std::unexpected(qr_right.error());
+    }
     if (qr_right && *qr_right)
     {
         right_schema = *qr_right;
@@ -1457,8 +1533,18 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
         {
             const auto & key_left = static_cast<const popo::parser::ColumnRefExpr &>(*bin.left);
             const auto & key_right = static_cast<const popo::parser::ColumnRefExpr &>(*bin.right);
-            auto [c0, i0] = resolve_column(key_left.table_name, key_left.column_name);
-            auto [c1, i1] = resolve_column(key_right.table_name, key_right.column_name);
+            auto resolved_left = resolve_column(key_left.table_name, key_left.column_name);
+            if (!resolved_left)
+            {
+                return std::unexpected(resolved_left.error());
+            }
+            auto resolved_right = resolve_column(key_right.table_name, key_right.column_name);
+            if (!resolved_right)
+            {
+                return std::unexpected(resolved_right.error());
+            }
+            auto [c0, i0] = *resolved_left;
+            auto [c1, i1] = *resolved_right;
             auto pk_index = [this](int32_t cursor) -> int32_t {
                 auto it = cursor_schemas_.find(cursor);
                 if (it == cursor_schemas_.end() || !it->second)
@@ -1491,14 +1577,14 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
                 std::vector<int32_t> filter_jumps;
                 for (const auto * f : pipe.where_filters)
                 {
-                    compile_expr(f->condition);
+                    POPO_TRY(compile_expr(f->condition));
                     filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
                 }
                 if (pipe.project)
                 {
                     for (const auto & expr : pipe.project->expressions)
                     {
-                        compile_expr(expr);
+                        POPO_TRY(compile_expr(expr));
                     }
                     program_.emit(OpCode::ResultRow, num_output_cols);
                 }
@@ -1529,7 +1615,7 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
                 program_.emit(OpCode::Close, right_cursor);
                 program_.emit(OpCode::Close, left_cursor);
                 program_.emit(OpCode::Halt);
-                return;
+                return {};
             }
         }
     }
@@ -1543,14 +1629,14 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     int32_t join_cond_jump = -1;
     if (pipe.join->condition)
     {
-        compile_expr(pipe.join->condition);
+        POPO_TRY(compile_expr(pipe.join->condition));
         join_cond_jump = program_.emit(OpCode::JumpIfFalse, 0);
     }
 
     std::vector<int32_t> filter_jumps;
     for (const auto * f : pipe.where_filters)
     {
-        compile_expr(f->condition);
+        POPO_TRY(compile_expr(f->condition));
         filter_jumps.push_back(program_.emit(OpCode::JumpIfFalse, 0));
     }
 
@@ -1558,7 +1644,7 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     {
         for (const auto & expr : pipe.project->expressions)
         {
-            compile_expr(expr);
+            POPO_TRY(compile_expr(expr));
         }
         program_.emit(OpCode::ResultRow, num_output_cols);
     }
@@ -1594,6 +1680,7 @@ void Compiler::compile_select_with_join(const SelectPipeline & pipe)
     program_.emit(OpCode::Close, right_cursor);
     program_.emit(OpCode::Close, left_cursor);
     program_.emit(OpCode::Halt);
+    return {};
 }
 
 void Compiler::compile_show_tables(const popo::planner::ShowTablesNode & /*node*/)
@@ -1668,9 +1755,19 @@ void Compiler::compile_select_database(const popo::planner::SelectDatabaseNode &
 
 void Compiler::compile_select_system_var(const popo::planner::SelectSystemVarNode & node)
 {
-    int32_t col_name_idx = program_.add_string_constant("@@" + node.var_name);
-    program_.emit(OpCode::ColumnName, 0, col_name_idx);
-    int32_t var_name_idx = program_.add_string_constant(node.var_name);
+    std::string packed;
+    for (size_t i = 0; i < node.var_names.size(); ++i)
+    {
+        if (i != 0)
+        {
+            packed.push_back('\n');
+        }
+        packed += node.var_names[i];
+        std::string column = i < node.column_names.size() && !node.column_names[i].empty() ? node.column_names[i] : node.var_names[i];
+        int32_t col_name_idx = program_.add_string_constant(column);
+        program_.emit(OpCode::ColumnName, static_cast<int32_t>(i), col_name_idx);
+    }
+    int32_t var_name_idx = program_.add_string_constant(packed);
     program_.emit(OpCode::SelectSystemVar, var_name_idx);
     program_.emit(OpCode::Halt);
 }

@@ -139,7 +139,9 @@ TEST_F(CompilerTest, CompileScan)
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto prog = compiler.compile(scan).value();
+    auto prog_result = compiler.compile(scan);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     // Should have: OpenRead, Rewind, (Column, Column, Column, ResultRow,) Next, Close, Halt
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenRead));
@@ -158,7 +160,8 @@ TEST_F(CompilerTest, CompileScanHasCorrectResultColumns)
     scan->table_name = "users";
     scan->column_names = {"id", "name", "age"};
 
-    auto prog = compiler.compile(scan).value();
+    auto prog_result = compiler.compile(scan);
+    ASSERT_TRUE(prog_result.has_value());
 }
 
 // ---- Insert Compilation ----
@@ -172,7 +175,9 @@ TEST_F(CompilerTest, CompileInsert)
     insert->values[0].push_back(make_str_literal("Alice"));
     insert->values[0].push_back(make_int_literal(25));
 
-    auto prog = compiler.compile(insert).value();
+    auto prog_result = compiler.compile(insert);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenWrite));
     EXPECT_TRUE(has_opcode(prog, OpCode::Const));
@@ -194,7 +199,9 @@ TEST_F(CompilerTest, CompileInsertMultipleRows)
     insert->values[1].push_back(make_str_literal("Bob"));
     insert->values[1].push_back(make_int_literal(30));
 
-    auto prog = compiler.compile(insert).value();
+    auto prog_result = compiler.compile(insert);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
     // 2 MakeRow + 2 InsertRow
     EXPECT_EQ(count_opcodes(prog, OpCode::MakeRow), 2);
     EXPECT_EQ(count_opcodes(prog, OpCode::InsertRow), 2);
@@ -212,7 +219,9 @@ TEST_F(CompilerTest, CompileCreateTable)
     col.is_primary_key = true;
     ct->columns.push_back(col);
 
-    auto prog = compiler.compile(ct).value();
+    auto prog_result = compiler.compile(ct);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::CreateTable));
     EXPECT_TRUE(has_opcode(prog, OpCode::Halt));
@@ -226,7 +235,9 @@ TEST_F(CompilerTest, CompileDropTable)
     dt->table_name = "users";
     dt->if_exists = false;
 
-    auto prog = compiler.compile(dt).value();
+    auto prog_result = compiler.compile(dt);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::DropTable));
     EXPECT_TRUE(has_opcode(prog, OpCode::Halt));
@@ -238,7 +249,9 @@ TEST_F(CompilerTest, CompileDropTableIfExists)
     dt->table_name = "users";
     dt->if_exists = true;
 
-    auto prog = compiler.compile(dt).value();
+    auto prog_result = compiler.compile(dt);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::DropTable));
     // operand2 should be 1 (if_exists)
@@ -259,7 +272,9 @@ TEST_F(CompilerTest, CompileDeleteAll)
     del->table_name = "users";
     del->where_clause = nullptr; // DELETE all
 
-    auto prog = compiler.compile(del).value();
+    auto prog_result = compiler.compile(del);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenWrite));
     EXPECT_TRUE(has_opcode(prog, OpCode::Rewind));
@@ -275,7 +290,9 @@ TEST_F(CompilerTest, CompileDeleteWithWhere)
     del->table_name = "users";
     del->where_clause = make_binary(popo::parser::BinaryOpType::Eq, make_col_ref("", "id"), make_int_literal(42));
 
-    auto prog = compiler.compile(del).value();
+    auto prog_result = compiler.compile(del);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::DeleteRow));
     EXPECT_TRUE(has_opcode(prog, OpCode::SeekByPk));
@@ -294,7 +311,9 @@ TEST_F(CompilerTest, CompileUpdateAll)
     assign.value = make_int_literal(99);
     upd->assignments.push_back(assign);
 
-    auto prog = compiler.compile(upd).value();
+    auto prog_result = compiler.compile(upd);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenWrite));
     EXPECT_TRUE(has_opcode(prog, OpCode::UpdateRow));
@@ -314,7 +333,9 @@ TEST_F(CompilerTest, CompileUpdateWithWhere)
     assign.value = make_str_literal("adult");
     upd->assignments.push_back(assign);
 
-    auto prog = compiler.compile(upd).value();
+    auto prog_result = compiler.compile(upd);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::UpdateRow));
     EXPECT_TRUE(has_opcode(prog, OpCode::JumpIfFalse));
@@ -339,7 +360,9 @@ TEST_F(CompilerTest, CompileSelectSimple)
     project->expressions.push_back(make_col_ref("", "name"));
     project->output_names = {"id", "name"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenRead));
     EXPECT_TRUE(has_opcode(prog, OpCode::Rewind));
@@ -365,7 +388,9 @@ TEST_F(CompilerTest, CompileSelectStar)
     project->expressions.push_back(star);
     project->output_names = {"id", "name", "age"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenRead));
     EXPECT_TRUE(has_opcode(prog, OpCode::ResultRow));
@@ -390,7 +415,9 @@ TEST_F(CompilerTest, CompileSelectWithLimit)
     project->expressions.push_back(make_col_ref("", "id"));
     project->output_names = {"id"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::JumpIfFalse)); // limit countdown check
     EXPECT_TRUE(has_opcode(prog, OpCode::Sub)); // decrement
@@ -420,7 +447,9 @@ TEST_F(CompilerTest, CompileSelectWithAgg)
     project->expressions.push_back(avg_age);
     project->output_names = {"COUNT(*)", "AVG(age)"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::AggInit));
     EXPECT_TRUE(has_opcode(prog, OpCode::AggStep));
@@ -451,7 +480,9 @@ TEST_F(CompilerTest, CompileSelectWithSort)
     project->expressions.push_back(make_col_ref("", "name"));
     project->output_names = {"id", "name"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::SorterOpen));
     EXPECT_TRUE(has_opcode(prog, OpCode::SortKeyDef));
@@ -503,36 +534,39 @@ TEST_F(CompilerTest, CompileSelectWithJoin)
     project->expressions.push_back(make_col_ref("users", "name"));
     project->output_names = {"id", "name"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
-    // Nested loop join: 2 OpenRead, 2 Rewind, 2 Next, 2 Close, 1 ResultRow, 1 Halt
+    // Nested-loop join scans both inputs and evaluates the join predicate.
     EXPECT_EQ(count_opcodes(prog, OpCode::OpenRead), 2);
     EXPECT_EQ(count_opcodes(prog, OpCode::Rewind), 2);
     EXPECT_EQ(count_opcodes(prog, OpCode::Next), 2);
     EXPECT_EQ(count_opcodes(prog, OpCode::Close), 2);
     EXPECT_TRUE(has_opcode(prog, OpCode::Halt));
-    EXPECT_TRUE(has_opcode(prog, OpCode::JumpIfFalse)); // join condition
+    EXPECT_TRUE(has_opcode(prog, OpCode::JumpIfFalse));
 }
 
 // ---- Error cases ----
 
 TEST_F(CompilerTest, CompileNullPlanReturnsEmptyProgram)
 {
-    auto prog = compiler.compile(nullptr).value();
+    auto prog_result = compiler.compile(nullptr);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
     EXPECT_TRUE(prog.instructions.empty());
 }
 
-TEST_F(CompilerTest, CompileInsertWithColumnNotFoundThrows)
+TEST_F(CompilerTest, CompileInsertWithTableNotFound)
 {
     auto insert = std::make_shared<popo::planner::InsertNode>();
     insert->table_name = "nonexistent";
     insert->values.resize(1);
     insert->values[0].push_back(make_int_literal(1));
 
-    auto prog = compiler.compile(insert).value();
-    // The table is not registered, but OpenWrite with nonexistent table in VM handles it
-    // The compiler itself won't error on missing table for insert
-    EXPECT_TRUE(has_opcode(prog, OpCode::OpenWrite));
+    auto prog_result = compiler.compile(insert);
+    ASSERT_FALSE(prog_result.has_value());
+    EXPECT_EQ(prog_result.error().error_code, popo::base::Errno::TableNotFound);
 }
 
 TEST_F(CompilerTest, CompileDropNonexistentTable)
@@ -541,7 +575,9 @@ TEST_F(CompilerTest, CompileDropNonexistentTable)
     dt->table_name = "nosuchtable";
     dt->if_exists = false;
 
-    auto prog = compiler.compile(dt).value();
+    auto prog_result = compiler.compile(dt);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
     // Compiler itself won't error — VM handles table existence
     EXPECT_TRUE(has_opcode(prog, OpCode::DropTable));
 }
@@ -570,7 +606,9 @@ TEST_F(CompilerTest, CompileSelectWithSortAndLimit)
     project->expressions.push_back(make_col_ref("", "id"));
     project->output_names = {"id"};
 
-    auto prog = compiler.compile(project).value();
+    auto prog_result = compiler.compile(project);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     EXPECT_TRUE(has_opcode(prog, OpCode::SorterOpen));
     EXPECT_TRUE(has_opcode(prog, OpCode::SorterSort));
@@ -587,7 +625,9 @@ TEST_F(CompilerTest, CompileInsertEmptyValues)
     insert->table_name = "users";
     // No values
 
-    auto prog = compiler.compile(insert).value();
+    auto prog_result = compiler.compile(insert);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     // Should still emit OpenWrite + Close + Halt
     EXPECT_TRUE(has_opcode(prog, OpCode::OpenWrite));
@@ -607,7 +647,9 @@ TEST_F(CompilerTest, CompileInsertHasCorrectConstants)
     insert->values.resize(1);
     insert->values[0].push_back(make_int_literal(42));
 
-    auto prog = compiler.compile(insert).value();
+    auto prog_result = compiler.compile(insert);
+    ASSERT_TRUE(prog_result.has_value());
+    const auto & prog = *prog_result;
 
     // Should have table name constant and value constant
     bool found_table = false, found_value = false;

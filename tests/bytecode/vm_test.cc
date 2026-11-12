@@ -138,7 +138,7 @@ TEST_F(VMTest, ExecuteHaltOnly)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
-    EXPECT_TRUE(result.has_value());
+    ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->rows.size(), 0u);
 }
 
@@ -161,7 +161,7 @@ TEST_F(VMTest, ExecuteConstResultRow)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
-    EXPECT_TRUE(result.has_value());
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 100);
 }
@@ -177,7 +177,7 @@ TEST_F(VMTest, ExecuteMultipleResultRows)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
-    EXPECT_TRUE(result.has_value());
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 5u);
     for (int i = 0; i < 5; i++)
     {
@@ -197,6 +197,7 @@ TEST_F(VMTest, ExecuteAdd)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 30);
 }
@@ -211,6 +212,7 @@ TEST_F(VMTest, ExecuteSub)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 35);
 }
@@ -225,6 +227,7 @@ TEST_F(VMTest, ExecuteMul)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 56);
 }
@@ -239,6 +242,7 @@ TEST_F(VMTest, ExecuteDiv)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 25);
 }
@@ -253,6 +257,7 @@ TEST_F(VMTest, ExecuteDivByZero)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 0); // div-by-zero returns 0
 }
@@ -266,6 +271,7 @@ TEST_F(VMTest, ExecuteNeg)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), -42);
 }
@@ -280,6 +286,7 @@ TEST_F(VMTest, ExecuteFloatAdd)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_DOUBLE_EQ(result->rows[0]->values_[0].f64(), 6.0);
 }
@@ -296,6 +303,7 @@ TEST_F(VMTest, ExecuteEqTrue)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
@@ -310,6 +318,7 @@ TEST_F(VMTest, ExecuteEqFalse)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_FALSE(result->rows[0]->values_[0].boolean());
 }
@@ -324,6 +333,7 @@ TEST_F(VMTest, ExecuteNe)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -337,6 +347,7 @@ TEST_F(VMTest, ExecuteLt)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -351,6 +362,7 @@ TEST_F(VMTest, ExecuteLe)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -364,6 +376,7 @@ TEST_F(VMTest, ExecuteGtFalse)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->rows[0]->values_[0].boolean());
 }
 
@@ -378,6 +391,7 @@ TEST_F(VMTest, ExecuteGe)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -393,6 +407,7 @@ TEST_F(VMTest, ExecuteAnd)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -406,6 +421,7 @@ TEST_F(VMTest, ExecuteAndFalse)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->rows[0]->values_[0].boolean());
 }
 
@@ -419,6 +435,7 @@ TEST_F(VMTest, ExecuteOr)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
 
@@ -431,6 +448,7 @@ TEST_F(VMTest, ExecuteNot)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     EXPECT_FALSE(result->rows[0]->values_[0].boolean());
 }
 
@@ -458,7 +476,7 @@ TEST_F(VMTest, ExecuteJumpIfFalseSkipBlock)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
-    EXPECT_TRUE(result.has_value());
+    ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->rows.size(), 0u); // skipped
 }
 
@@ -473,6 +491,7 @@ TEST_F(VMTest, ExecuteJumpIfFalseEnterBlock)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 42);
 }
@@ -488,6 +507,7 @@ TEST_F(VMTest, ExecuteJumpIfTrue)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 7);
 }
@@ -513,6 +533,7 @@ TEST_F(VMTest, ExecuteLoopWithJump)
     prog.emit(OpCode::Halt); // 8
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i64(), 5);
 }
@@ -528,6 +549,7 @@ TEST_F(VMTest, ExecuteDup)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     ASSERT_GE(result->rows[0]->values_.size(), 2u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 99);
@@ -932,7 +954,7 @@ TEST_F(VMTest, DropTableIfExists)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
-    EXPECT_TRUE(result.has_value());
+    ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->message, "Table does not exist");
 }
 
@@ -1008,6 +1030,7 @@ TEST_F(VMTest, ComplexArithmeticExpression)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_EQ(result->rows[0]->values_[0].i32(), 40);
 }
@@ -1028,6 +1051,7 @@ TEST_F(VMTest, ComplexBooleanExpression)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->rows.size(), 1u);
     EXPECT_TRUE(result->rows[0]->values_[0].boolean());
 }
@@ -1043,6 +1067,7 @@ TEST_F(VMTest, ResultColumnsPropagated)
     prog.emit(OpCode::Halt);
 
     auto result = vm_->execute(prog);
+    ASSERT_TRUE(result.has_value());
     ASSERT_EQ(result->columns.size(), 1u);
     EXPECT_EQ(result->columns[0], "my_col");
 }

@@ -1,5 +1,6 @@
 #include "src/catalog/schema_mgr.h"
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <unordered_set>
 #include "src/base/error.h"
@@ -11,32 +12,58 @@ namespace popo::catalog
 using popo::base::Errno;
 using popo::base::Error;
 
+namespace
+{
+
+std::string lower_name(const std::string & text)
+{
+    std::string out = text;
+    for (char & c : out)
+    {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+template <typename Map>
+auto find_ci(Map & map, const std::string & name) -> decltype(map.find(name))
+{
+    auto exact = map.find(name);
+    if (exact != map.end())
+        return exact;
+    std::string target = lower_name(name);
+    for (auto it = map.begin(); it != map.end(); ++it)
+    {
+        if (lower_name(it->first) == target)
+            return it;
+    }
+    return map.end();
+}
+
+} // namespace
+
 popo::base::Result<SchemaId> SchemaManager::create_table(const std::string & table_name, const std::vector<Column> & columns)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 1. 检查表名是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it != schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableAlreadyExists, "table already exists: " + table_name));
     }
 
-    // 2. 检查列属性是否合法
     auto col_result = validate_columns(columns);
     if (!col_result)
     {
         return std::unexpected(col_result.error());
     }
 
-    // 3. 创建新的Schema
     auto schema = std::make_shared<Schema>();
     schema->id_ = next_schema_id_++;
     schema->table_name_ = table_name;
     schema->columns_ = columns;
     schema->primary_key_col_idx_ = find_primary_key_column(columns);
 
-    // 4. 添加到映射中
     schema_map_[table_name] = schema;
 
     return schema->id_;
@@ -46,14 +73,12 @@ popo::base::Result<void> SchemaManager::delete_table(const std::string & table_n
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    // 删除表
     schema_map_.erase(it);
     return {};
 }
@@ -62,8 +87,7 @@ popo::base::Result<SchemaRef> SchemaManager::query_table(const std::string & tab
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
@@ -76,21 +100,18 @@ popo::base::Result<void> SchemaManager::modify_table(const std::string & table_n
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    // 验证新列定义
     auto col_result = validate_columns(new_columns);
     if (!col_result)
     {
         return std::unexpected(col_result.error());
     }
 
-    // 更新表结构
     it->second->columns_ = new_columns;
     it->second->primary_key_col_idx_ = find_primary_key_column(new_columns);
 
@@ -102,23 +123,20 @@ popo::base::Result<void> SchemaManager::create_index(
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    // 检查索引是否已存在
     for (const auto & index : it->second->indexes_)
     {
-        if (index.index_name_ == index_name)
+        if (lower_name(index.index_name_) == lower_name(index_name))
         {
             return std::unexpected(Error(Errno::InvalidArg, "index already exists"));
         }
     }
 
-    // 验证索引列是否有效
     for (int32_t col_idx : index_cols)
     {
         if (col_idx < 0 || col_idx >= static_cast<int32_t>(it->second->columns_.size()))
@@ -127,7 +145,6 @@ popo::base::Result<void> SchemaManager::create_index(
         }
     }
 
-    // 创建新索引
     SchemaIndex new_index;
     new_index.index_name_ = index_name;
     new_index.index_cols_ = index_cols;
@@ -142,17 +159,17 @@ popo::base::Result<void> SchemaManager::delete_index(const std::string & table_n
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
     }
 
-    // 查找并删除索引
     auto & indexes = it->second->indexes_;
     auto index_it = std::find_if(
-        indexes.begin(), indexes.end(), [&index_name](const SchemaIndex & index) { return index.index_name_ == index_name; });
+        indexes.begin(),
+        indexes.end(),
+        [&index_name](const SchemaIndex & index) { return lower_name(index.index_name_) == lower_name(index_name); });
 
     if (index_it == indexes.end())
     {
@@ -168,8 +185,7 @@ popo::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const s
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
 
-    // 检查表是否存在
-    const auto it = schema_map_.find(table_name);
+    const auto it = find_ci(schema_map_, table_name);
     if (it == schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableNotFound, "table not found"));
@@ -180,36 +196,25 @@ popo::base::Result<std::vector<SchemaIndex>> SchemaManager::list_indexes(const s
 
 popo::base::Result<void> SchemaManager::validate_columns(const std::vector<Column> & columns)
 {
-    // 检查是否有重复的列名
+    if (columns.empty())
+    {
+        return std::unexpected(Error(Errno::InvalidColumnDefinition, "table must have at least one column"));
+    }
     std::unordered_set<std::string> column_names;
-    int primary_key_count = 0;
 
     for (const auto & column : columns)
     {
-        // 检查列名是否重复
-        if (column_names.find(column.column_name_) != column_names.end())
+        std::string cname = lower_name(column.column_name_);
+        if (column_names.find(cname) != column_names.end())
         {
             return std::unexpected(Error(Errno::InvalidColumnDefinition, "duplicate column name"));
         }
-        column_names.insert(column.column_name_);
+        column_names.insert(cname);
 
-        // 统计主键数量
-        if (column.is_primary_key_)
-        {
-            primary_key_count++;
-        }
-
-        // 检查主键约束
         if (column.is_primary_key_ && column.is_nullable_)
         {
             return std::unexpected(Error(Errno::InvalidColumnDefinition, "primary key column cannot be nullable"));
         }
-    }
-
-    // 检查是否恰好有一个主键
-    if (primary_key_count != 1)
-    {
-        return std::unexpected(Error(Errno::InvalidColumnDefinition, "table must have exactly one primary key"));
     }
 
     return {};
@@ -217,45 +222,78 @@ popo::base::Result<void> SchemaManager::validate_columns(const std::vector<Colum
 
 int32_t SchemaManager::find_primary_key_column(const std::vector<Column> & columns)
 {
+    int32_t found = -1;
+    int count = 0;
     for (size_t i = 0; i < columns.size(); ++i)
     {
         if (columns[i].is_primary_key_)
         {
-            return static_cast<int32_t>(i);
+            found = static_cast<int32_t>(i);
+            ++count;
         }
     }
-    return -1; // 没有找到主键
+    return count == 1 ? found : -1;
 }
 
-popo::base::Result<void> SchemaManager::create_view(const std::string & name, popo::parser::StmtPtr query)
+popo::base::Result<void> SchemaManager::create_view(
+    const std::string & name, popo::parser::StmtPtr query, std::vector<std::string> column_names, bool or_replace)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
-    if (schema_map_.contains(name) || views_.contains(name))
+    if (find_ci(schema_map_, name) != schema_map_.end())
     {
         return std::unexpected(Error(Errno::TableAlreadyExists, "name already exists: " + name));
     }
+    auto vit = find_ci(views_, name);
+    if (vit != views_.end())
+    {
+        if (!or_replace)
+        {
+            return std::unexpected(Error(Errno::TableAlreadyExists, "name already exists: " + name));
+        }
+        view_columns_.erase(vit->first);
+        views_.erase(vit);
+    }
     views_[name] = std::move(query);
+    if (!column_names.empty())
+    {
+        view_columns_[name] = std::move(column_names);
+    }
     return {};
 }
 
-popo::base::Result<void> SchemaManager::drop_view(const std::string & name)
+popo::base::Result<void> SchemaManager::drop_view(const std::string & name, bool if_exists)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
-    if (!views_.contains(name))
+    auto vit = find_ci(views_, name);
+    if (vit == views_.end())
     {
+        if (if_exists)
+            return {};
         return std::unexpected(Error(Errno::TableNotFound, "view not found: " + name));
     }
-    views_.erase(name);
+    view_columns_.erase(vit->first);
+    views_.erase(vit);
     return {};
 }
 
 popo::parser::StmtPtr SchemaManager::find_view(const std::string & name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);
-    auto it = views_.find(name);
+    auto it = find_ci(views_, name);
     if (it == views_.end())
     {
         return nullptr;
+    }
+    return it->second;
+}
+
+std::vector<std::string> SchemaManager::find_view_columns(const std::string & name)
+{
+    std::lock_guard<std::mutex> lgd(this->mtx_);
+    auto it = find_ci(view_columns_, name);
+    if (it == view_columns_.end())
+    {
+        return {};
     }
     return it->second;
 }

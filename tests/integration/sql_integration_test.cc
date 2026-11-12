@@ -6,6 +6,7 @@
  */
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -30,6 +31,7 @@ protected:
     std::unique_ptr<popo::storage::StorageEngine> storage_engine_;
     std::unique_ptr<popo::server::Server> popo_server_;
     std::thread popo_thread_;
+    std::filesystem::path data_dir_;
 
     // MySQL connections
     MYSQL * mysql_conn_ = nullptr;
@@ -41,10 +43,24 @@ protected:
     {
         // 1) Start PopoDB server in background thread
         schema_mgr_ = std::make_unique<popo::catalog::SchemaManager>();
-        storage_engine_ = std::make_unique<popo::storage::StorageEngine>("test_data");
-        storage_engine_->init();
-        popo_server_ = std::make_unique<popo::server::Server>(POPO_PORT, *schema_mgr_, *storage_engine_);
-        popo_thread_ = std::thread([this]() { popo_server_->start(); });
+        data_dir_ = std::filesystem::temp_directory_path()
+            / ("popo_integration_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(data_dir_);
+        storage_engine_ = std::make_unique<popo::storage::StorageEngine>(data_dir_.string());
+        auto initialized = storage_engine_->init();
+        ASSERT_TRUE(initialized) << (initialized ? "" : initialized.error().error_message);
+        auto server = popo::server::Server::create(POPO_PORT, *schema_mgr_, *storage_engine_);
+        ASSERT_TRUE(server) << (server ? "" : server.error().error_message);
+        popo_server_ = std::move(*server);
+        popo_thread_ = std::thread(
+            [this]()
+            {
+                auto started = popo_server_->start();
+                if (!started)
+                {
+                    spdlog::error("Integration server failed: {}", started.error().error_message);
+                }
+            });
         // give the server a moment to bind
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
@@ -52,7 +68,10 @@ protected:
         mysql_conn_ = mysql_init(nullptr);
         ASSERT_NE(mysql_conn_, nullptr);
         MYSQL * m = mysql_real_connect(mysql_conn_, "127.0.0.1", "root", "testpass", "testdb", 3306, nullptr, 0);
-        ASSERT_NE(m, nullptr) << "MySQL 8.0 connect failed: " << mysql_error(mysql_conn_);
+        if (m == nullptr)
+        {
+            GTEST_SKIP() << "MySQL 8.0 is unavailable: " << mysql_error(mysql_conn_);
+        }
 
         // 3) Connect to PopoDB server
         popo_conn_ = mysql_init(nullptr);
@@ -97,6 +116,7 @@ protected:
         {
             storage_engine_->shutdown();
         }
+        std::filesystem::remove_all(data_dir_);
     }
 
     // -------------------------------------------------------------------

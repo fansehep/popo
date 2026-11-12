@@ -12,8 +12,6 @@
 namespace popo::bytecode
 {
 
-using popo::base::Error;
-
 class Compiler
 {
 public:
@@ -30,17 +28,17 @@ private:
     std::unordered_map<const popo::parser::Expr *, int32_t> agg_expr_to_index_;
     bool in_agg_step_context_ = false;
 
-    void compile_node(const popo::planner::PlanNodePtr & node);
-    void compile_scan(const popo::planner::ScanNode & node);
-    void compile_filter(const popo::planner::FilterNode & node);
-    void compile_project(const popo::planner::ProjectNode & node);
-    void compile_join(const popo::planner::JoinNode & node);
-    void compile_agg(const popo::planner::AggNode & node);
-    void compile_sort(const popo::planner::SortNode & node);
-    void compile_limit(const popo::planner::LimitNode & node);
-    void compile_insert(const popo::planner::InsertNode & node);
-    void compile_update(const popo::planner::UpdateNode & node);
-    void compile_delete(const popo::planner::DeleteNode & node);
+    popo::base::Result<void> compile_node(const popo::planner::PlanNodePtr & node);
+    popo::base::Result<void> compile_scan(const popo::planner::ScanNode & node);
+    popo::base::Result<void> compile_filter(const popo::planner::FilterNode & node);
+    popo::base::Result<void> compile_project(const popo::planner::ProjectNode & node);
+    popo::base::Result<void> compile_join(const popo::planner::JoinNode & node);
+    popo::base::Result<void> compile_agg(const popo::planner::AggNode & node);
+    popo::base::Result<void> compile_sort(const popo::planner::SortNode & node);
+    popo::base::Result<void> compile_limit(const popo::planner::LimitNode & node);
+    popo::base::Result<void> compile_insert(const popo::planner::InsertNode & node);
+    popo::base::Result<void> compile_update(const popo::planner::UpdateNode & node);
+    popo::base::Result<void> compile_delete(const popo::planner::DeleteNode & node);
     void compile_create_table(const popo::planner::CreateTableNode & node);
     void compile_create_index(const popo::planner::CreateIndexNode & node);
     void compile_drop_table(const popo::planner::DropTableNode & node);
@@ -52,7 +50,7 @@ private:
     void compile_show_status(const popo::planner::ShowStatusNode & node);
     void compile_select_database(const popo::planner::SelectDatabaseNode & node);
     void compile_select_system_var(const popo::planner::SelectSystemVarNode & node);
-    void compile_expr(const popo::parser::ExprPtr & expr);
+    popo::base::Result<void> compile_expr(const popo::parser::ExprPtr & expr);
 
     // Detect "pk_column = literal_constant" pattern.
     // Returns {cursor_id, pk_col_idx, literal_value} if matched, nullopt otherwise.
@@ -72,10 +70,10 @@ private:
 
     int32_t alloc_cursor() { return next_cursor_id_++; }
     int32_t alloc_sorter() { return next_sorter_id_++; }
-    std::pair<int32_t, int32_t> resolve_column(const std::string & table_name, const std::string & col_name);
+    popo::base::Result<std::pair<int32_t, int32_t>> resolve_column(const std::string & table_name, const std::string & col_name);
     int32_t find_column_index(int32_t cursor_id, const std::string & col_name);
     void emit_all_columns(int32_t cursor_id);
-    void open_table_cursor(const std::string & table_name, bool for_write);
+    popo::base::Result<void> open_table_cursor(const std::string & table_name, bool for_write);
 
     struct SelectPipeline
     {
@@ -89,13 +87,13 @@ private:
         const popo::planner::ProjectNode * project = nullptr;
     };
 
-    void compile_select(const popo::planner::ProjectNode & project);
+    popo::base::Result<void> compile_select(const popo::planner::ProjectNode & project);
     void analyze_select_pipeline(const popo::planner::PlanNodePtr & node, SelectPipeline & pipe);
-    void compile_select_pipeline(const SelectPipeline & pipe);
-    void compile_select_simple(const SelectPipeline & pipe);
-    void compile_select_with_sort(const SelectPipeline & pipe);
-    void compile_select_with_agg(const SelectPipeline & pipe);
-    void compile_select_with_join(const SelectPipeline & pipe);
+    popo::base::Result<void> compile_select_pipeline(const SelectPipeline & pipe);
+    popo::base::Result<void> compile_select_simple(const SelectPipeline & pipe);
+    popo::base::Result<void> compile_select_with_sort(const SelectPipeline & pipe);
+    popo::base::Result<void> compile_select_with_agg(const SelectPipeline & pipe);
+    popo::base::Result<void> compile_select_with_join(const SelectPipeline & pipe);
 
     // Resolve project expressions: expand StarExpr, return actual column count and names
     int32_t resolve_project_columns(const std::vector<popo::parser::ExprPtr> & exprs, std::vector<std::string> & out_names);

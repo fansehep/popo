@@ -128,6 +128,10 @@ public:
     page_id_t get_root_page_id() const { return root_page_id_; }
     void set_root_page_id(page_id_t pid) { root_page_id_ = pid; }
 
+    // MVCC installs committed rows into the heap without re-logging: the logical
+    // operation and COMMIT are already durable in the WAL. Toggle off during install.
+    void set_log_wal(bool enabled) { log_wal_ = enabled; }
+
 private:
     std::string table_name_;
     BufferPoolManager * buffer_pool_;
@@ -137,6 +141,7 @@ private:
 
     page_id_t root_page_id_ = INVALID_PAGE_ID; // B+Tree root page
     int sort_width_ = 1;
+    bool log_wal_ = true;
     mutable AdaptiveHashIndex ahi_;
 
     struct SecondaryIndex

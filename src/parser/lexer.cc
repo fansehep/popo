@@ -74,6 +74,12 @@ Token Lexer::read_number()
     std::string value;
     bool is_float = false;
 
+    if (peek() == '.')
+    {
+        is_float = true;
+        value.push_back(advance());
+    }
+
     while (std::isdigit(static_cast<unsigned char>(peek())) || peek() == '.')
     {
         if (peek() == '.')
@@ -87,6 +93,35 @@ Token Lexer::read_number()
         value.push_back(advance());
     }
 
+    if (peek() == 'e' || peek() == 'E')
+    {
+        size_t next = pos_ + 1;
+        bool valid_exp = false;
+        if (next < input_.size() && std::isdigit(static_cast<unsigned char>(input_[next])))
+        {
+            valid_exp = true;
+        }
+        else if (
+            next + 1 < input_.size() && (input_[next] == '+' || input_[next] == '-')
+            && std::isdigit(static_cast<unsigned char>(input_[next + 1])))
+        {
+            valid_exp = true;
+        }
+        if (valid_exp)
+        {
+            is_float = true;
+            value.push_back(advance()); // e / E
+            if (peek() == '+' || peek() == '-')
+            {
+                value.push_back(advance());
+            }
+            while (std::isdigit(static_cast<unsigned char>(peek())))
+            {
+                value.push_back(advance());
+            }
+        }
+    }
+
     TokenType type = is_float ? TokenType::Float : TokenType::Integer;
     return Token{type, value, start_line, start_col};
 }
@@ -98,14 +133,19 @@ Token Lexer::read_string()
     char quote = advance(); // ' or "
     std::string value;
 
-    while (peek() != '\0' && peek() != quote)
+    while (peek() != '\0')
     {
+        if (peek() == quote)
+        {
+            advance(); // closing or escaped quote
+            if (peek() == quote)
+            {
+                value.push_back(advance());
+                continue;
+            }
+            break;
+        }
         value.push_back(advance());
-    }
-
-    if (peek() == quote)
-    {
-        advance(); // closing quote
     }
 
     return Token{TokenType::String, value, start_line, start_col};
@@ -220,6 +260,16 @@ TokenType Lexer::keyword_lookup(const std::string & word)
         {"over", TokenType::Over},
         {"partition", TokenType::Partition},
         {"view", TokenType::View},
+        {"user", TokenType::User},
+        {"identified", TokenType::Identified},
+        {"grant", TokenType::Grant},
+        {"grants", TokenType::Grants},
+        {"revoke", TokenType::Revoke},
+        {"privileges", TokenType::Privileges},
+        {"option", TokenType::Option},
+        {"usage", TokenType::Usage},
+        {"password", TokenType::Password},
+        {"for", TokenType::For},
         {"offset", TokenType::Offset},
         {"with", TokenType::With},
         {"add", TokenType::Add},
@@ -280,10 +330,29 @@ std::vector<Token> Lexer::tokenize()
             continue;
         }
 
-        // Numbers
-        if (std::isdigit(static_cast<unsigned char>(c)))
+        // Numbers (including leading-dot floats like .06)
+        if (std::isdigit(static_cast<unsigned char>(c))
+            || (c == '.' && pos_ + 1 < input_.size() && std::isdigit(static_cast<unsigned char>(input_[pos_ + 1]))
+                && (tokens.empty() || tokens.back().type != TokenType::Identifier)))
         {
             tokens.push_back(read_number());
+            continue;
+        }
+
+        // Backtick-quoted identifiers (`col`)
+        if (c == '`')
+        {
+            advance();
+            std::string ident;
+            while (peek() != '\0' && peek() != '`')
+            {
+                ident.push_back(advance());
+            }
+            if (peek() == '`')
+            {
+                advance();
+            }
+            tokens.push_back(Token{TokenType::Identifier, ident, start_line, start_col});
             continue;
         }
 
@@ -386,6 +455,9 @@ std::vector<Token> Lexer::tokenize()
                 break;
             case '.':
                 tokens.push_back(Token{TokenType::Dot, ".", start_line, start_col});
+                break;
+            case '@':
+                tokens.push_back(Token{TokenType::At, "@", start_line, start_col});
                 break;
             default:
                 tokens.push_back(Token{TokenType::Invalid, std::string(1, c), start_line, start_col});

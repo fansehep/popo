@@ -26,11 +26,11 @@ protected:
         std::filesystem::remove_all(dir_);
     }
 
-    popo::test::SqlResult must(const std::string & sql)
+    popo::test::SqlSuccess must(const std::string & sql)
     {
         auto result = runner_->exec(sql);
-        EXPECT_TRUE(result.ok) << sql << " -> " << result.error;
-        return result;
+        EXPECT_TRUE(result) << sql << " -> " << (result ? "" : result.error().error_message);
+        return result ? std::move(*result) : popo::test::SqlSuccess{};
     }
 
     void seed()
@@ -146,7 +146,7 @@ TEST_F(Sql2006Test, View)
     EXPECT_EQ(rows.result.rows[1]->values_[0].string_ref(), "eve");
     must("DROP VIEW high");
     auto gone = runner_->exec("SELECT name FROM high");
-    EXPECT_FALSE(gone.ok);
+    EXPECT_FALSE(gone);
 }
 
 TEST_F(Sql2006Test, SqlXmlPublishing)

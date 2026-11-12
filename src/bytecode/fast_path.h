@@ -8,7 +8,6 @@
 #include <string_view>
 #include "src/bytecode/vm.h"
 #include "src/catalog/schema_mgr.h"
-#include "src/storage/row_serializer.h"
 #include "src/storage/storage_engine.h"
 #include "src/type/tuple.h"
 
@@ -17,8 +16,11 @@ namespace popo::bytecode
 
 // Primary-key point select: SELECT col FROM table WHERE pk = int
 // Anything else returns nullopt and the caller uses the full parser.
+// `txn` is the open transaction to read through, or nullptr for an autocommit
+// statement that just wants the latest committed row.
 inline std::optional<ExecuteSuccess> try_point_select(
-    popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine, std::string_view sql)
+    popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine, std::string_view sql,
+    popo::txn::Transaction * txn)
 {
     auto skip = [&](size_t & i) {
         while (i < sql.size() && std::isspace(static_cast<unsigned char>(sql[i])))
@@ -139,7 +141,7 @@ inline std::optional<ExecuteSuccess> try_point_select(
     {
         return std::nullopt;
     }
-    const popo::catalog::Schema & schema = *schema_result.value();
+    const popo::catalog::Schema & schema = **schema_result;
     int32_t pk = schema.primary_key_col_idx_;
     if (pk < 0 || static_cast<size_t>(pk) >= schema.columns_.size() || schema.columns_[static_cast<size_t>(pk)].column_name_ != pk_column)
     {
@@ -158,26 +160,24 @@ inline std::optional<ExecuteSuccess> try_point_select(
     {
         return std::nullopt;
     }
-    popo::storage::TableHeap * heap = engine.get_table_heap(table);
-    if (heap == nullptr)
+    if (!engine.table_exists(table))
     {
         return std::nullopt;
     }
 
     ExecuteSuccess result;
     result.columns.push_back(column);
-    auto rid = heap->lookup_pk(popo::type::Value(popo::type::ValueType::Int64, key));
-    if (!rid.has_value())
-    {
-        return result;
-    }
-    auto tuple = heap->get_row(*rid);
-    if (!tuple.has_value())
+    // Inside a transaction the read must honour its snapshot and buffered writes.
+    // Otherwise a single autocommit statement sees the latest committed row, which
+    // is what any isolation level reduces to here — no BEGIN/COMMIT WAL needed.
+    auto key_value = popo::type::Value(popo::type::ValueType::Int64, key);
+    auto row = txn != nullptr ? engine.mvcc()->lookup(txn, table, key_value) : engine.mvcc()->lookup_committed(table, key_value);
+    if (!row.has_value() || static_cast<size_t>(col) >= row->values_.size())
     {
         return result;
     }
     auto out = std::make_shared<popo::type::Row>();
-    out->append_value(popo::storage::RowSerializer::read_column(tuple->data(), tuple->size(), schema, col));
+    out->append_value(row->values_[static_cast<size_t>(col)]);
     result.rows.push_back(std::move(out));
     return result;
 }

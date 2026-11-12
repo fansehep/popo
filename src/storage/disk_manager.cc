@@ -5,8 +5,8 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <spdlog/spdlog.h>
-#include <stdexcept>
 #include <sys/stat.h>
+#include <system_error>
 #include <unistd.h>
 #include <unordered_set>
 #include <zstd.h>
@@ -102,6 +102,16 @@ bool block_has_space(const BlockMeta & meta, uint32_t comp_size)
 
 DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir), io_(std::make_unique<IoRing>())
 {
+    init_status_ = init_internal();
+    if (!init_status_)
+    {
+        spdlog::error("DiskManager::init: {}", init_status_.error().error_message);
+    }
+}
+
+popo::base::Result<void> DiskManager::init_internal()
+{
+    POPO_TRY(io_->status());
     cctx_ = ZSTD_createCCtx();
     dctx_ = ZSTD_createDCtx();
     if (cctx_ == nullptr || dctx_ == nullptr)
@@ -110,7 +120,7 @@ DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir), io
         ZSTD_freeDCtx(static_cast<ZSTD_DCtx *>(dctx_));
         cctx_ = nullptr;
         dctx_ = nullptr;
-        throw std::runtime_error("failed to create zstd context");
+        return popo::base::make_error(popo::base::Errno::InternalErr, "failed to create zstd context");
     }
     // Negative levels are zstd's fast strategy. Page images are sparse, and the
     // commit barrier waits on the log, so encode time matters more than ratio.
@@ -123,15 +133,18 @@ DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir), io
     ZSTD_CCtx_setParameter(static_cast<ZSTD_CCtx *>(cctx_), ZSTD_c_checksumFlag, 0);
     ZSTD_CCtx_setParameter(static_cast<ZSTD_CCtx *>(cctx_), ZSTD_c_contentSizeFlag, 0);
     comp_buf_.resize(ZSTD_compressBound(PAGE_SIZE));
-    std::filesystem::create_directories(data_dir_);
-    if (!std::filesystem::exists(data_dir_))
+    std::error_code ec;
+    std::filesystem::create_directories(data_dir_, ec);
+    if (!std::filesystem::exists(data_dir_, ec))
     {
-        return;
+        return popo::base::make_error(popo::base::Errno::IoErr, "data directory missing: " + data_dir_);
     }
-    open_wal();
-    for (const auto & entry : std::filesystem::directory_iterator(data_dir_))
+    POPO_TRY(open_wal());
+    for (std::filesystem::directory_iterator it(data_dir_, ec), end; !ec && it != end; it.increment(ec))
     {
-        if (!entry.is_regular_file() || entry.path().extension() != ".ndb")
+        const auto & entry = *it;
+        std::error_code file_ec;
+        if (!entry.is_regular_file(file_ec) || entry.path().extension() != ".ndb")
         {
             continue;
         }
@@ -139,15 +152,16 @@ DiskManager::DiskManager(const std::string & data_dir) : data_dir_(data_dir), io
         int fd = ::open(entry.path().c_str(), O_RDWR);
         if (fd < 0)
         {
-            throw std::runtime_error("Failed to open table file: " + entry.path().string());
+            return popo::base::make_error(popo::base::Errno::IoErr, "Failed to open table file: " + entry.path().string());
         }
         auto loaded = load_table(table_name, fd);
         if (!loaded)
         {
             ::close(fd);
-            throw std::runtime_error(loaded.error().error_message);
+            return loaded;
         }
     }
+    return {};
 }
 
 DiskManager::~DiskManager()
@@ -353,8 +367,13 @@ popo::base::Result<void> DiskManager::load_table(const std::string & table_name,
 popo::base::Result<void> DiskManager::create_table_file(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (!init_status_)
+    {
+        return std::unexpected(init_status_.error());
+    }
     std::string path = table_file_path(table_name);
-    if (std::filesystem::exists(path) || tables_.contains(table_name))
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) || tables_.contains(table_name))
     {
         return std::unexpected(
             popo::base::Error(static_cast<int32_t>(popo::base::TableAlreadyExists), "Table file already exists: " + path));
@@ -368,7 +387,7 @@ popo::base::Result<void> DiskManager::create_table_file(const std::string & tabl
     if (::ftruncate(fd, FILE_HEADER_SIZE) != 0)
     {
         ::close(fd);
-        std::filesystem::remove(path);
+        std::filesystem::remove(path, ec);
         return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "Failed to size table file: " + path));
     }
 
@@ -385,7 +404,7 @@ popo::base::Result<void> DiskManager::create_table_file(const std::string & tabl
     if (!written)
     {
         ::close(fd);
-        std::filesystem::remove(path);
+        std::filesystem::remove(path, ec);
         return written;
     }
     tables_.emplace(table_name, std::move(table));
@@ -405,9 +424,10 @@ void DiskManager::remove_table_file(const std::string & table_name)
         tables_.erase(it);
     }
     std::string path = table_file_path(table_name);
-    if (std::filesystem::exists(path))
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec))
     {
-        std::filesystem::remove(path);
+        std::filesystem::remove(path, ec);
     }
 }
 
@@ -537,7 +557,7 @@ popo::base::Result<void> DiskManager::append_entry(
         {
             return std::unexpected(allocated.error());
         }
-        block_id = allocated.value();
+        block_id = *allocated;
     }
 
     BlockMeta & meta = table.blocks[block_id];
@@ -604,7 +624,7 @@ popo::base::Result<void> DiskManager::write_page(const std::string & table_name,
         in_txn_ = true;
         own = true;
     }
-    auto appended = append_entry(*table, page_id, comp_buf_.data(), comp_size.value(), false);
+    auto appended = append_entry(*table, page_id, comp_buf_.data(), *comp_size, false);
     if (!appended)
     {
         if (own)
@@ -615,7 +635,7 @@ popo::base::Result<void> DiskManager::write_page(const std::string & table_name,
     }
     if (own)
     {
-        commit_unlocked();
+        return commit_unlocked();
     }
     return {};
 }
@@ -649,7 +669,8 @@ page_id_t DiskManager::page_count(const std::string & table_name)
 
 bool DiskManager::table_file_exists(const std::string & table_name) const
 {
-    return std::filesystem::exists(table_file_path(table_name));
+    std::error_code ec;
+    return std::filesystem::exists(table_file_path(table_name), ec);
 }
 
 bool DiskManager::begin_txn()
@@ -669,10 +690,10 @@ bool DiskManager::in_txn() const
     return in_txn_;
 }
 
-void DiskManager::commit_txn()
+popo::base::Result<void> DiskManager::commit_txn()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    commit_unlocked();
+    return commit_unlocked();
 }
 
 void DiskManager::abort_txn()
@@ -711,28 +732,28 @@ void DiskManager::retire_page(const std::string & table_name, page_id_t page_id)
     }
     if (own)
     {
-        commit_unlocked();
+        (void)commit_unlocked();
     }
 }
 
-void DiskManager::open_wal()
+popo::base::Result<void> DiskManager::open_wal()
 {
     std::string path = data_dir_ + "/commit.wal";
     wal_fd_ = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
     if (wal_fd_ < 0)
     {
-        throw std::runtime_error("failed to open commit log: " + path);
+        return popo::base::make_error(popo::base::Errno::IoErr, "failed to open commit log: " + path);
     }
     struct stat st{};
     if (::fstat(wal_fd_, &st) != 0)
     {
-        throw std::runtime_error("failed to stat commit log");
+        return popo::base::make_error(popo::base::Errno::IoErr, "failed to stat commit log");
     }
     if (st.st_size < static_cast<off_t>(FILE_HEADER_SIZE))
     {
         if (::ftruncate(wal_fd_, FILE_HEADER_SIZE) != 0)
         {
-            throw std::runtime_error("failed to size commit log");
+            return popo::base::make_error(popo::base::Errno::IoErr, "failed to size commit log");
         }
         alignas(8) char buf[FILE_HEADER_SIZE];
         std::memset(buf, 0, sizeof(buf));
@@ -740,42 +761,30 @@ void DiskManager::open_wal()
         uint32_t version = WAL_VERSION;
         std::memcpy(buf, &magic, sizeof(magic));
         std::memcpy(buf + sizeof(magic), &version, sizeof(version));
-        auto written = io_->write_and_fsync(wal_fd_, buf, FILE_HEADER_SIZE, 0, false);
-        if (!written)
-        {
-            throw std::runtime_error(written.error().error_message);
-        }
+        POPO_TRY(io_->write_and_fsync(wal_fd_, buf, FILE_HEADER_SIZE, 0, false));
         wal_end_ = FILE_HEADER_SIZE;
         wal_alloc_ = FILE_HEADER_SIZE;
-        return;
+        return {};
     }
 
     uint32_t magic = 0;
     uint32_t version = 0;
-    auto header = io_->read_at(wal_fd_, &magic, sizeof(magic), 0);
-    if (!header)
-    {
-        throw std::runtime_error(header.error().error_message);
-    }
-    header = io_->read_at(wal_fd_, &version, sizeof(version), sizeof(magic));
-    if (!header)
-    {
-        throw std::runtime_error(header.error().error_message);
-    }
+    POPO_TRY(io_->read_at(wal_fd_, &magic, sizeof(magic), 0));
+    POPO_TRY(io_->read_at(wal_fd_, &version, sizeof(version), sizeof(magic)));
     if (magic != WAL_MAGIC || version != WAL_VERSION)
     {
-        throw std::runtime_error("bad commit log header");
+        return popo::base::make_error(popo::base::Errno::InternalErr, "bad commit log header");
     }
     wal_alloc_ = static_cast<uint64_t>(st.st_size);
-    replay_wal();
+    return replay_wal();
 }
 
-void DiskManager::replay_wal()
+popo::base::Result<void> DiskManager::replay_wal()
 {
     struct stat st{};
     if (::fstat(wal_fd_, &st) != 0)
     {
-        throw std::runtime_error("failed to stat commit log");
+        return popo::base::make_error(popo::base::Errno::IoErr, "failed to stat commit log");
     }
     uint64_t file_size = static_cast<uint64_t>(st.st_size);
     uint64_t pos = FILE_HEADER_SIZE;
@@ -800,7 +809,7 @@ void DiskManager::replay_wal()
         if (!prefix)
         {
             close_fds();
-            throw std::runtime_error(prefix.error().error_message);
+            return prefix;
         }
         if (magic == 0)
         {
@@ -814,13 +823,13 @@ void DiskManager::replay_wal()
         if (!prefix)
         {
             close_fds();
-            throw std::runtime_error(prefix.error().error_message);
+            return prefix;
         }
         prefix = io_->read_at(wal_fd_, &crc, sizeof(crc), pos + 8);
         if (!prefix)
         {
             close_fds();
-            throw std::runtime_error(prefix.error().error_message);
+            return prefix;
         }
         if (len > WAL_REC_LIMIT || pos + 12 + static_cast<uint64_t>(len) > file_size)
         {
@@ -833,7 +842,7 @@ void DiskManager::replay_wal()
             if (!body)
             {
                 close_fds();
-                throw std::runtime_error(body.error().error_message);
+                return body;
             }
             if (wal_crc(payload.data(), payload.size()) != crc)
             {
@@ -914,8 +923,9 @@ void DiskManager::replay_wal()
                 fd = ::open(path.c_str(), O_RDWR);
                 if (fd < 0)
                 {
-                    close_fds();
-                    throw std::runtime_error("commit log references missing table file: " + path);
+                    // The table was dropped after this generation was logged.
+                    // Its pages are no longer needed; skip rather than fail.
+                    continue;
                 }
                 fds.emplace(item.name, fd);
             }
@@ -924,12 +934,12 @@ void DiskManager::replay_wal()
             if (::fstat(fd, &table_st) != 0)
             {
                 close_fds();
-                throw std::runtime_error("failed to stat table file during recovery");
+                return popo::base::make_error(popo::base::Errno::IoErr, "failed to stat table file during recovery");
             }
             if (table_st.st_size < need && ::ftruncate(fd, need) != 0)
             {
                 close_fds();
-                throw std::runtime_error("failed to extend table file during recovery");
+                return popo::base::make_error(popo::base::Errno::IoErr, "failed to extend table file during recovery");
             }
             std::vector<IoRing::Write> writes;
             writes.reserve(item.pieces.size());
@@ -945,7 +955,7 @@ void DiskManager::replay_wal()
             if (!written)
             {
                 close_fds();
-                throw std::runtime_error(written.error().error_message);
+                return written;
             }
             writes.clear();
             for (const auto & [block_id, meta] : item.metas)
@@ -960,7 +970,7 @@ void DiskManager::replay_wal()
             if (!written)
             {
                 close_fds();
-                throw std::runtime_error(written.error().error_message);
+                return written;
             }
         }
         pos += 12 + static_cast<uint64_t>(len);
@@ -972,32 +982,27 @@ void DiskManager::replay_wal()
         if (!synced)
         {
             close_fds();
-            throw std::runtime_error(synced.error().error_message);
+            return synced;
         }
     }
     close_fds();
-    reset_wal();
+    return reset_wal();
 }
 
-void DiskManager::reset_wal()
+popo::base::Result<void> DiskManager::reset_wal()
 {
     if (::ftruncate(wal_fd_, FILE_HEADER_SIZE) != 0)
     {
-        throw std::runtime_error("failed to truncate commit log");
+        return popo::base::make_error(popo::base::Errno::IoErr, "failed to truncate commit log");
     }
     wal_end_ = FILE_HEADER_SIZE;
     wal_alloc_ = FILE_HEADER_SIZE;
-    auto synced = io_->fsync(wal_fd_);
-    if (!synced)
-    {
-        throw std::runtime_error(synced.error().error_message);
-    }
+    return io_->fsync(wal_fd_);
 }
 
-popo::base::Result<void> DiskManager::durable_wal_write(const char * data, uint32_t len)
+popo::base::Result<void> DiskManager::append_wal_record(const char * data, uint32_t len)
 {
     uint64_t need = wal_end_ + len;
-    bool grew = false;
     if (need > wal_alloc_)
     {
         uint64_t alloc = wal_alloc_ == 0 ? WAL_CHUNK : wal_alloc_;
@@ -1010,11 +1015,11 @@ popo::base::Result<void> DiskManager::durable_wal_write(const char * data, uint3
             return std::unexpected(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "failed to extend commit log"));
         }
         wal_alloc_ = alloc;
-        grew = true;
     }
-    // The write and its barrier ride one linked submission; commit does not
-    // return before the record is durable.
-    auto written = io_->write_and_fsync(wal_fd_, data, len, wal_end_, !grew);
+    // Page images are a cache, not the recovery authority: RecoveryManager
+    // rebuilds every table from the logical redo log and recreates its file. So
+    // this write needs no barrier, and a commit never waits on a dirty page.
+    auto written = io_->write_at(wal_fd_, data, len, wal_end_);
     if (!written)
     {
         return written;
@@ -1107,10 +1112,10 @@ popo::base::Result<void> DiskManager::append_wal_commit()
     append_pod(wal_record_, len);
     append_pod(wal_record_, crc);
     append_raw(wal_record_, payload.data(), payload.size());
-    return durable_wal_write(wal_record_.data(), static_cast<uint32_t>(wal_record_.size()));
+    return append_wal_record(wal_record_.data(), static_cast<uint32_t>(wal_record_.size()));
 }
 
-void DiskManager::publish_memory(TableState & table)
+popo::base::Result<void> DiskManager::publish_memory(TableState & table)
 {
     std::vector<IoRing::Write> writes;
     writes.reserve(table.pending_io.size());
@@ -1122,11 +1127,7 @@ void DiskManager::publish_memory(TableState & table)
         }
         writes.push_back({pending.bytes->data(), static_cast<uint32_t>(pending.bytes->size()), pending.offset});
     }
-    auto written = io_->write_batch(table.fd, writes.data(), writes.size());
-    if (!written)
-    {
-        throw std::runtime_error(written.error().error_message);
-    }
+    POPO_TRY(io_->write_batch(table.fd, writes.data(), writes.size()));
 
     // Block metadata lands after the payloads it points at, the header last.
     writes.clear();
@@ -1145,11 +1146,7 @@ void DiskManager::publish_memory(TableState & table)
     std::memset(header_buf, 0, sizeof(header_buf));
     std::memcpy(header_buf, &table.header, sizeof(FileHeader));
     writes.push_back({header_buf, FILE_HEADER_SIZE, 0});
-    written = io_->write_batch(table.fd, writes.data(), writes.size());
-    if (!written)
-    {
-        throw std::runtime_error(written.error().error_message);
-    }
+    POPO_TRY(io_->write_batch(table.fd, writes.data(), writes.size()));
     for (uint32_t id = 0; id < table.blocks.size(); ++id)
     {
         if (id < table.block_dirty.size() && table.block_dirty[id])
@@ -1167,13 +1164,14 @@ void DiskManager::publish_memory(TableState & table)
     table.participating = false;
     table.txn_gen = 0;
     table.grew = false;
+    return {};
 }
 
-void DiskManager::commit_unlocked()
+popo::base::Result<void> DiskManager::commit_unlocked()
 {
     if (!in_txn_)
     {
-        return;
+        return {};
     }
     std::vector<TableState *> published;
     for (auto & [name, table] : tables_)
@@ -1189,11 +1187,11 @@ void DiskManager::commit_unlocked()
         if (!logged)
         {
             spdlog::error("DiskManager::commit: {}", logged.error().error_message);
-            throw std::runtime_error(logged.error().error_message);
+            return logged;
         }
         for (TableState * table : published)
         {
-            publish_memory(*table);
+            POPO_TRY(publish_memory(*table));
         }
     }
     in_txn_ = false;
@@ -1204,6 +1202,7 @@ void DiskManager::commit_unlocked()
             maybe_gc(*table);
         }
     }
+    return {};
 }
 
 void DiskManager::abort_table(TableState & table)
@@ -1387,7 +1386,7 @@ popo::base::Result<void> DiskManager::gc_table(TableState & table)
     {
         table.header.open_block = NO_BLOCK;
     }
-    commit_unlocked();
+    POPO_TRY(commit_unlocked());
 
     for (auto it = table.committed.begin(); it != table.committed.end();)
     {

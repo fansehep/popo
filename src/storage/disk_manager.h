@@ -29,6 +29,8 @@ public:
     DiskManager(const DiskManager &) = delete;
     DiskManager & operator=(const DiskManager &) = delete;
 
+    const popo::base::Result<void> & status() const { return init_status_; }
+
     popo::base::Result<void> create_table_file(const std::string & table_name);
     void remove_table_file(const std::string & table_name);
 
@@ -40,7 +42,7 @@ public:
 
     // Single-writer transaction. begin_txn returns true when this call opened it.
     bool begin_txn();
-    void commit_txn();
+    popo::base::Result<void> commit_txn();
     void abort_txn();
     bool in_txn() const;
 
@@ -113,7 +115,9 @@ private:
     std::vector<char> wal_record_;
     bool in_txn_ = false;
     bool in_gc_ = false;
+    popo::base::Result<void> init_status_;
 
+    popo::base::Result<void> init_internal();
     std::string table_file_path(const std::string & table_name) const;
     TableState * find_table(const std::string & table_name);
     const TableState * find_table(const std::string & table_name) const;
@@ -128,15 +132,15 @@ private:
     popo::base::Result<uint32_t> alloc_block(TableState & table);
     popo::base::Result<void> append_entry(TableState & table, page_id_t page_id, const char * comp, uint32_t comp_size, bool tombstone);
     popo::base::Result<void> append_wal_commit();
-    popo::base::Result<void> durable_wal_write(const char * data, uint32_t len);
-    void publish_memory(TableState & table);
-    void open_wal();
-    void replay_wal();
-    void reset_wal();
+    popo::base::Result<void> append_wal_record(const char * data, uint32_t len);
+    popo::base::Result<void> publish_memory(TableState & table);
+    popo::base::Result<void> open_wal();
+    popo::base::Result<void> replay_wal();
+    popo::base::Result<void> reset_wal();
     popo::base::Result<uint32_t> compress_page(const char * src);
     popo::base::Result<void> decompress_page(const char * src, size_t src_len, char * dest);
     void abort_table(TableState & table);
-    void commit_unlocked();
+    popo::base::Result<void> commit_unlocked();
     void abort_unlocked();
     uint64_t dead_bytes(const TableState & table) const;
     void maybe_gc(TableState & table);

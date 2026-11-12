@@ -84,7 +84,7 @@ BufferPoolManager::BufferPoolManager(size_t pool_size, DiskManager * disk_manage
 
 BufferPoolManager::~BufferPoolManager()
 {
-    flush_all();
+    (void)flush_all();
 }
 
 PageGuard BufferPoolManager::fetch_page(const std::string & table_name, page_id_t page_id)
@@ -109,7 +109,7 @@ PageGuard BufferPoolManager::fetch_page(const std::string & table_name, page_id_
         return PageGuard(); // invalid guard
     }
 
-    frame_id_t fid = frame_opt.value();
+    frame_id_t fid = *frame_opt;
     FrameInfo & frame = frames_[fid];
     frame.key = key;
     frame.is_dirty = false;
@@ -117,7 +117,12 @@ PageGuard BufferPoolManager::fetch_page(const std::string & table_name, page_id_
     frame.page_lsn = INVALID_LSN;
 
     // Read page data from disk.
-    disk_manager_->read_page(table_name, page_id, frame.data).value();
+    if (auto read = disk_manager_->read_page(table_name, page_id, frame.data); !read)
+    {
+        frame = FrameInfo{};
+        free_list_.push_back(fid);
+        return PageGuard();
+    }
 
     page_table_[key] = fid;
     replacer_.pin(fid);
@@ -136,8 +141,15 @@ PageGuard BufferPoolManager::new_page(const std::string & table_name, page_id_t 
         return PageGuard();
     }
 
-    frame_id_t fid = frame_opt.value();
-    page_id_t new_pid = disk_manager_->allocate_page(table_name).value();
+    frame_id_t fid = *frame_opt;
+    auto allocated = disk_manager_->allocate_page(table_name);
+    if (!allocated)
+    {
+        free_list_.push_back(fid);
+        out_page_id = INVALID_PAGE_ID;
+        return PageGuard();
+    }
+    page_id_t new_pid = *allocated;
 
     FrameInfo & frame = frames_[fid];
     frame.key = PageKey{table_name, new_pid};
@@ -168,13 +180,16 @@ bool BufferPoolManager::flush_page(const std::string & table_name, page_id_t pag
     FrameInfo & frame = frames_[fid];
     if (frame.is_dirty)
     {
-        disk_manager_->write_page(table_name, page_id, frame.data).value();
+        if (!disk_manager_->write_page(table_name, page_id, frame.data))
+        {
+            return false;
+        }
         frame.is_dirty = false;
     }
     return true;
 }
 
-void BufferPoolManager::flush_all()
+popo::base::Result<void> BufferPoolManager::flush_all()
 {
     bool own_txn = disk_manager_->begin_txn();
     {
@@ -190,22 +205,24 @@ void BufferPoolManager::flush_all()
             {
                 continue;
             }
-            try
-            {
-                disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data).value();
-            }
-            catch (...)
+            auto written = disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data);
+            if (!written)
             {
                 dirty_.insert(dirty_.end(), todo.begin() + static_cast<std::ptrdiff_t>(n), todo.end());
-                throw;
+                if (own_txn)
+                {
+                    disk_manager_->abort_txn();
+                }
+                return written;
             }
             frame.is_dirty = false;
         }
     }
     if (own_txn)
     {
-        disk_manager_->commit_txn();
+        return disk_manager_->commit_txn();
     }
+    return {};
 }
 
 void BufferPoolManager::drop_page(const std::string & table_name, page_id_t page_id)
@@ -243,6 +260,24 @@ void BufferPoolManager::invalidate_all()
     for (size_t i = 0; i < pool_size_; ++i)
     {
         free_list_.push_back(static_cast<frame_id_t>(i));
+    }
+}
+
+void BufferPoolManager::invalidate_table(const std::string & table_name)
+{
+    std::lock_guard lock(latch_);
+    for (auto it = page_table_.begin(); it != page_table_.end();)
+    {
+        frame_id_t fid = it->second;
+        if (it->first.table_name != table_name || frames_[fid].pin_count > 0)
+        {
+            ++it;
+            continue;
+        }
+        replacer_.pin(fid);
+        frames_[fid] = FrameInfo{};
+        free_list_.push_back(fid);
+        it = page_table_.erase(it);
     }
 }
 
@@ -311,13 +346,17 @@ std::optional<frame_id_t> BufferPoolManager::get_free_frame()
         return std::nullopt;
     }
 
-    frame_id_t fid = victim_opt.value();
+    frame_id_t fid = *victim_opt;
     FrameInfo & frame = frames_[fid];
 
     // Flush dirty victim to disk.
     if (frame.is_dirty)
     {
-        disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data).value();
+        if (!disk_manager_->write_page(frame.key.table_name, frame.key.page_id, frame.data))
+        {
+            replacer_.unpin(fid);
+            return std::nullopt;
+        }
         frame.is_dirty = false;
     }
 

@@ -77,25 +77,26 @@ int main()
     std::vector<Sample> samples;
 
     auto created = runner.exec("CREATE TABLE bench (id INT PRIMARY KEY, name VARCHAR(32))");
-    if (!created.ok)
+    if (!created)
     {
-        std::cerr << "create failed: " << created.error << '\n';
+        std::cerr << "create failed: " << created.error().error_message << '\n';
         return 1;
     }
-    samples.push_back({"create", 1, 0, created.parse_us + created.plan_us + created.compile_us + created.vm_us, created.vm_us});
+    samples.push_back(
+        {"create", 1, 0, created->parse_us + created->plan_us + created->compile_us + created->vm_us, created->vm_us});
 
     Sample batch{"insert_batch_100", kBatches, 0, 0, 0};
     for (int b = 0; b < kBatches; ++b)
     {
         auto result = runner.exec(batch_insert(b * kBatchRows + 1, kBatchRows));
-        if (!result.ok)
+        if (!result)
         {
-            std::cerr << "batch insert failed: " << result.error << '\n';
+            std::cerr << "batch insert failed: " << result.error().error_message << '\n';
             return 1;
         }
-        batch.rows += result.result.rows_affected;
-        batch.total_us += result.parse_us + result.plan_us + result.compile_us + result.vm_us;
-        batch.vm_us += result.vm_us;
+        batch.rows += result->result.rows_affected;
+        batch.total_us += result->parse_us + result->plan_us + result->compile_us + result->vm_us;
+        batch.vm_us += result->vm_us;
     }
     samples.push_back(batch);
 
@@ -105,33 +106,33 @@ int main()
     {
         int id = auto_base + i;
         auto result = runner.exec("INSERT INTO bench VALUES (" + std::to_string(id) + ", 'a" + std::to_string(id) + "')");
-        if (!result.ok)
+        if (!result)
         {
-            std::cerr << "autocommit insert failed: " << result.error << '\n';
+            std::cerr << "autocommit insert failed: " << result.error().error_message << '\n';
             return 1;
         }
-        autocommit.rows += result.result.rows_affected;
-        autocommit.total_us += result.parse_us + result.plan_us + result.compile_us + result.vm_us;
-        autocommit.vm_us += result.vm_us;
+        autocommit.rows += result->result.rows_affected;
+        autocommit.total_us += result->parse_us + result->plan_us + result->compile_us + result->vm_us;
+        autocommit.vm_us += result->vm_us;
     }
     samples.push_back(autocommit);
 
     int expected = kBatches * kBatchRows + kAutoRows;
     auto scanned = runner.exec("SELECT * FROM bench");
-    if (!scanned.ok)
+    if (!scanned)
     {
-        std::cerr << "select * failed: " << scanned.error << '\n';
+        std::cerr << "select * failed: " << scanned.error().error_message << '\n';
         return 1;
     }
     samples.push_back(
         {"select_star",
          1,
-         static_cast<int64_t>(scanned.result.rows.size()),
-         scanned.parse_us + scanned.plan_us + scanned.compile_us + scanned.vm_us,
-         scanned.vm_us});
-    if (static_cast<int>(scanned.result.rows.size()) != expected)
+         static_cast<int64_t>(scanned->result.rows.size()),
+         scanned->parse_us + scanned->plan_us + scanned->compile_us + scanned->vm_us,
+         scanned->vm_us});
+    if (static_cast<int>(scanned->result.rows.size()) != expected)
     {
-        std::cerr << "select * returned " << scanned.result.rows.size() << " rows, expected " << expected << '\n';
+        std::cerr << "select * returned " << scanned->result.rows.size() << " rows, expected " << expected << '\n';
         return 1;
     }
 
@@ -140,14 +141,19 @@ int main()
     {
         int id = 1 + (i * 37) % (kBatches * kBatchRows);
         auto result = runner.exec("SELECT name FROM bench WHERE id = " + std::to_string(id));
-        if (!result.ok || result.result.rows.size() != 1)
+        if (!result)
         {
-            std::cerr << "point select id=" << id << " failed: " << result.error << " rows=" << result.result.rows.size() << '\n';
+            std::cerr << "point select id=" << id << " failed: " << result.error().error_message << '\n';
             return 1;
         }
-        points.rows += static_cast<int64_t>(result.result.rows.size());
-        points.total_us += result.parse_us + result.plan_us + result.compile_us + result.vm_us;
-        points.vm_us += result.vm_us;
+        if (result->result.rows.size() != 1)
+        {
+            std::cerr << "point select id=" << id << " returned " << result->result.rows.size() << " rows\n";
+            return 1;
+        }
+        points.rows += static_cast<int64_t>(result->result.rows.size());
+        points.total_us += result->parse_us + result->plan_us + result->compile_us + result->vm_us;
+        points.vm_us += result->vm_us;
     }
     samples.push_back(points);
 
@@ -156,14 +162,19 @@ int main()
     {
         int id = 1 + i * 10;
         auto result = runner.exec("UPDATE bench SET name = 'u" + std::to_string(id) + "' WHERE id = " + std::to_string(id));
-        if (!result.ok || result.result.rows_affected != 1)
+        if (!result)
         {
-            std::cerr << "update id=" << id << " failed: " << result.error << " affected=" << result.result.rows_affected << '\n';
+            std::cerr << "update id=" << id << " failed: " << result.error().error_message << '\n';
             return 1;
         }
-        updates.rows += result.result.rows_affected;
-        updates.total_us += result.parse_us + result.plan_us + result.compile_us + result.vm_us;
-        updates.vm_us += result.vm_us;
+        if (result->result.rows_affected != 1)
+        {
+            std::cerr << "update id=" << id << " affected=" << result->result.rows_affected << '\n';
+            return 1;
+        }
+        updates.rows += result->result.rows_affected;
+        updates.total_us += result->parse_us + result->plan_us + result->compile_us + result->vm_us;
+        updates.vm_us += result->vm_us;
     }
     samples.push_back(updates);
 
@@ -172,29 +183,39 @@ int main()
     {
         int id = auto_base + i;
         auto result = runner.exec("DELETE FROM bench WHERE id = " + std::to_string(id));
-        if (!result.ok || result.result.rows_affected != 1)
+        if (!result)
         {
-            std::cerr << "delete id=" << id << " failed: " << result.error << " affected=" << result.result.rows_affected << '\n';
+            std::cerr << "delete id=" << id << " failed: " << result.error().error_message << '\n';
             return 1;
         }
-        deletes.rows += result.result.rows_affected;
-        deletes.total_us += result.parse_us + result.plan_us + result.compile_us + result.vm_us;
-        deletes.vm_us += result.vm_us;
+        if (result->result.rows_affected != 1)
+        {
+            std::cerr << "delete id=" << id << " affected=" << result->result.rows_affected << '\n';
+            return 1;
+        }
+        deletes.rows += result->result.rows_affected;
+        deletes.total_us += result->parse_us + result->plan_us + result->compile_us + result->vm_us;
+        deletes.vm_us += result->vm_us;
     }
     samples.push_back(deletes);
 
     auto counted = runner.exec("SELECT COUNT(*) FROM bench");
-    if (!counted.ok || counted.result.rows.size() != 1)
+    if (!counted)
     {
-        std::cerr << "count failed: " << counted.error << '\n';
+        std::cerr << "count failed: " << counted.error().error_message << '\n';
+        return 1;
+    }
+    if (counted->result.rows.size() != 1)
+    {
+        std::cerr << "count returned " << counted->result.rows.size() << " rows\n";
         return 1;
     }
     samples.push_back(
         {"select_count",
          1,
-         counted.result.rows[0]->values_[0].i64(),
-         counted.parse_us + counted.plan_us + counted.compile_us + counted.vm_us,
-         counted.vm_us});
+         counted->result.rows[0]->values_[0].i64(),
+         counted->parse_us + counted->plan_us + counted->compile_us + counted->vm_us,
+         counted->vm_us});
 
     std::cout << "workload\tops\trows\tms\trows_per_s\tvm_ms\n";
     for (const auto & sample : samples)

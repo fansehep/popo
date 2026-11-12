@@ -1,7 +1,6 @@
 #include "src/storage/row_serializer.h"
 #include <cmath>
 #include <cstring>
-#include <stdexcept>
 
 namespace popo::storage
 {
@@ -52,7 +51,10 @@ uint32_t RowSerializer::serialized_size(const Row & row, const Schema & schema)
             ValueType type = schema.columns_[i].data_type_;
             if (type == ValueType::String)
             {
-                size += sizeof(uint16_t) + static_cast<uint32_t>(row.values_[i].string_ref().size());
+                if (row.values_[i].datatype() == ValueType::String)
+                    size += sizeof(uint16_t) + static_cast<uint32_t>(row.values_[i].string_ref().size());
+                else
+                    size += sizeof(uint16_t) + static_cast<uint32_t>(row.values_[i].to_val_string().size());
             }
             else
             {
@@ -97,8 +99,16 @@ std::vector<char> RowSerializer::serialize(const Row & row, const Schema & schem
             continue;
         }
 
-        const Value & val = row.values_[i];
+        const Value & raw = row.values_[i];
         ValueType type = schema.columns_[i].data_type_;
+        Value coerced;
+        const Value * val_ptr = &raw;
+        if (raw.datatype() != type)
+        {
+            coerced = Schema::coerce_value(type, raw);
+            val_ptr = &coerced;
+        }
+        const Value & val = *val_ptr;
 
         switch (type)
         {

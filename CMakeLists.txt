@@ -2,8 +2,12 @@ cmake_minimum_required(VERSION 3.20)
 
 project(popodb LANGUAGES C CXX)
 
+enable_testing()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # add_compile_options(-g "-O0")
 include(FetchContent)
@@ -58,3 +62,12 @@ target_link_libraries(asio_lib INTERFACE Threads::Threads)
 
 add_subdirectory(src)
 add_subdirectory(tests)
+
+add_custom_target(
+    check_expected_errors
+    COMMAND
+        ${CMAKE_COMMAND}
+        -DPROJECT_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_SOURCE_DIR}/cmake/CheckExpectedErrors.cmake
+    COMMENT "Checking that project code uses Result<T> instead of exceptions"
+)

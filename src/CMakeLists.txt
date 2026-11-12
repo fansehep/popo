@@ -112,6 +112,7 @@ target_include_directories(planner_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 add_library(bytecode_lib
     bytecode/program.cc
     bytecode/compiler.cc
+    bytecode/txn_session.cc
     bytecode/vm.cc
 )
 target_link_libraries(bytecode_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib storage_lib)
@@ -135,18 +136,24 @@ add_library(storage_lib
     storage/redo_log.cc
     storage/table_heap.cc
     storage/storage_engine.cc
+    storage/recovery.cc
     trancation/manager.cc
+    trancation/mvcc.cc
 )
 target_include_directories(storage_lib PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(storage_lib PUBLIC base_lib type_lib catalog_lib spdlog zstd PRIVATE ${POPO_URING})
 
+find_package(OpenSSL REQUIRED)
 # Add server library
 add_library(server_lib
+    server/accounts.cc
+    server/auth.cc
+    server/config.cc
     server/protocol.cc
     server/session.cc
     server/server.cc
 )
-target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib executor_lib storage_lib asio_lib spdlog)
+target_link_libraries(server_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib executor_lib storage_lib asio_lib spdlog OpenSSL::Crypto)
 target_include_directories(server_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 # Add popodb-server executable

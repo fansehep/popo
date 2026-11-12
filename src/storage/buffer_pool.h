@@ -88,13 +88,17 @@ public:
     bool flush_page(const std::string & table_name, page_id_t page_id);
 
     /// Flush all dirty pages to disk.
-    void flush_all();
+    popo::base::Result<void> flush_all();
 
     /// Drop a cached page without writing it. Used when the page is retired.
     void drop_page(const std::string & table_name, page_id_t page_id);
 
     /// Forget every cached page. The next fetch reads the committed image.
     void invalidate_all();
+
+    /// Forget every cached page of one table without writing it. DROP TABLE
+    /// removes the file, so its dirty frames must never reach flush_all().
+    void invalidate_table(const std::string & table_name);
 
     /// Unpin a frame (called by PageGuard destructor).
     void unpin(frame_id_t frame_id, bool is_dirty);

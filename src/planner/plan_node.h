@@ -223,6 +223,7 @@ struct AlterTableNode : PlanNode
     popo::parser::AlterAction action;
     popo::parser::ColumnDef column;
     std::string target_name;
+    std::vector<std::string> key_columns;
     AlterTableNode() { type = PlanNodeType::AlterTable; }
 };
 
@@ -272,13 +273,16 @@ struct SelectDatabaseNode : PlanNode
 // SELECT @@xxx
 struct SelectSystemVarNode : PlanNode
 {
-    std::string var_name;
+    std::vector<std::string> var_names;
+    std::vector<std::string> column_names;
     SelectSystemVarNode() { type = PlanNodeType::SelectSystemVar; }
 };
 
 struct CreateViewNode : PlanNode
 {
     std::string name;
+    bool or_replace = false;
+    std::vector<std::string> column_names;
     popo::parser::StmtPtr query;
     CreateViewNode() { type = PlanNodeType::CreateView; }
 };
@@ -286,6 +290,7 @@ struct CreateViewNode : PlanNode
 struct DropViewNode : PlanNode
 {
     std::string name;
+    bool if_exists = false;
     DropViewNode() { type = PlanNodeType::DropView; }
 };
 

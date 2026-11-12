@@ -6,6 +6,7 @@
 #include <vector>
 #include "base/error.h"
 #include "bytecode/program.h"
+#include "bytecode/txn_session.h"
 #include "catalog/schema_mgr.h"
 #include "src/storage/storage_engine.h"
 #include "src/storage/table_heap.h"
@@ -33,9 +34,14 @@ public:
     // Otherwise the caller owns the transaction and commits or aborts it.
     popo::base::Result<ExecuteSuccess> execute(const Program & program, popo::txn::Transaction * outer_txn = nullptr);
 
+    // Connection state backing @@transaction_isolation and @@autocommit. Without
+    // it the VM reports the engine defaults.
+    void set_session(const TxnSession * session) { session_ = session; }
+
 private:
     popo::catalog::SchemaManager & schema_mgr_;
     popo::storage::StorageEngine & engine_;
+    const TxnSession * session_ = nullptr;
     popo::txn::Transaction * txn_ = nullptr;
     bool own_txn_ = true;
 
@@ -47,18 +53,14 @@ private:
     struct Cursor
     {
         std::string table_name;
+        // Schema and secondary-index access only; rows come from the version store.
         popo::storage::TableHeap * heap = nullptr;
-        std::unique_ptr<popo::storage::TableIterator> iter;
-        popo::catalog::Schema schema;
-        bool is_write = false;
-        // For tracking current row during iteration
-        popo::storage::RowId current_rid;
-        popo::type::Row current_row_cache;
+        int32_t pk_col = -1;
+        // Rows visible to this statement's snapshot, in PK order. Materialized once
+        // per scan so buffered writes cannot make the statement see its own output.
+        std::vector<popo::type::Row> rows;
+        size_t pos = 0;
         bool has_current = false;
-        bool row_materialized = false;
-        bool index_scan = false;
-        size_t index_pos = 0;
-        std::vector<popo::storage::RowId> index_hits;
     };
     std::unordered_map<int32_t, Cursor> cursors_;
 
@@ -113,6 +115,9 @@ private:
 
     // Reset state for new execution
     void reset();
+
+    // Instruction loop. Errors from buffered writes are propagated as Result.
+    popo::base::Result<ExecuteSuccess> run(const Program & program);
 };
 
 } // namespace popo::bytecode

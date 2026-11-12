@@ -21,6 +21,7 @@ public:
     IoRing(const IoRing &) = delete;
     IoRing & operator=(const IoRing &) = delete;
 
+    popo::base::Result<void> status() const;
     popo::base::Result<void> read_at(int fd, void * buf, uint32_t len, uint64_t offset);
     popo::base::Result<void> write_at(int fd, const void * buf, uint32_t len, uint64_t offset);
     popo::base::Result<void> fsync(int fd);

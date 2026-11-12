@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cctype>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 #include "type/value.h"
@@ -39,7 +41,15 @@ enum class ExprType
     Quantified,
     ScalarCall,
     Cast,
-    Window
+    Window,
+    Interval
+};
+
+enum class IntervalUnit : uint8_t
+{
+    Year,
+    Month,
+    Day
 };
 
 enum class BinaryOpType
@@ -248,6 +258,14 @@ struct WindowExpr : Expr
     WindowExpr() { type = ExprType::Window; }
 };
 
+// INTERVAL '90' DAY / INTERVAL '3' MONTH / INTERVAL '1' YEAR
+struct IntervalExpr : Expr
+{
+    ExprPtr value;
+    IntervalUnit unit = IntervalUnit::Day;
+    IntervalExpr() { type = ExprType::Interval; }
+};
+
 // Join type
 enum class JoinType
 {
@@ -279,6 +297,7 @@ struct SimpleTableRef : TableRef
 {
     std::string table_name;
     std::string alias;
+    std::vector<std::string> column_aliases;
     SimpleTableRef() { type = TableRefType::Simple; }
 };
 
@@ -291,11 +310,12 @@ struct JoinTableRef : TableRef
     JoinTableRef() { type = TableRefType::Join; }
 };
 
-// FROM (SELECT ...) AS alias
+// FROM (SELECT ...) AS alias [(col1, col2, ...)]
 struct DerivedTableRef : TableRef
 {
     StmtPtr query;
     std::string alias;
+    std::vector<std::string> column_aliases;
     DerivedTableRef() { type = TableRefType::Derived; }
 };
 
@@ -338,8 +358,91 @@ enum class StmtType
     SelectDatabase,
     SelectSystemVar,
     CreateView,
-    DropView
+    DropView,
+    CreateUser,
+    DropUser,
+    AlterUser,
+    Grant,
+    Revoke,
+    ShowGrants,
+    Begin,
+    Commit,
+    Rollback,
+    SetTransaction
 };
+
+// SQL standard isolation levels, named as the standard spells them. The storage
+// layer has its own enum; the session maps between the two.
+enum class IsolationLevel : uint8_t
+{
+    ReadUncommitted,
+    ReadCommitted,
+    RepeatableRead,
+    Serializable
+};
+
+// SET TRANSACTION without a scope applies to the next transaction only.
+enum class TxnScope : uint8_t
+{
+    Next,
+    Session,
+    Global
+};
+
+// MySQL spells these with dashes in @@transaction_isolation.
+inline const char * isolation_level_name(IsolationLevel level)
+{
+    switch (level)
+    {
+        case IsolationLevel::ReadUncommitted:
+            return "READ-UNCOMMITTED";
+        case IsolationLevel::ReadCommitted:
+            return "READ-COMMITTED";
+        case IsolationLevel::RepeatableRead:
+            return "REPEATABLE-READ";
+        case IsolationLevel::Serializable:
+            return "SERIALIZABLE";
+    }
+    return "READ-COMMITTED";
+}
+
+// Accepts READ COMMITTED, READ-COMMITTED, read_committed, ...
+inline std::optional<IsolationLevel> isolation_level_from_name(std::string_view text)
+{
+    std::string norm;
+    norm.reserve(text.size());
+    for (char ch : text)
+    {
+        if (ch == '-' || ch == '_' || std::isspace(static_cast<unsigned char>(ch)) != 0)
+        {
+            continue;
+        }
+        norm.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (norm == "readuncommitted")
+        return IsolationLevel::ReadUncommitted;
+    if (norm == "readcommitted")
+        return IsolationLevel::ReadCommitted;
+    if (norm == "repeatableread")
+        return IsolationLevel::RepeatableRead;
+    if (norm == "serializable")
+        return IsolationLevel::Serializable;
+    return std::nullopt;
+}
+
+// Privilege bits stored on GRANT. GRANT OPTION is separate from ALL PRIVILEGES.
+inline constexpr uint32_t kPrivSelect = 1u << 0;
+inline constexpr uint32_t kPrivInsert = 1u << 1;
+inline constexpr uint32_t kPrivUpdate = 1u << 2;
+inline constexpr uint32_t kPrivDelete = 1u << 3;
+inline constexpr uint32_t kPrivCreate = 1u << 4;
+inline constexpr uint32_t kPrivDrop = 1u << 5;
+inline constexpr uint32_t kPrivAlter = 1u << 6;
+inline constexpr uint32_t kPrivIndex = 1u << 7;
+inline constexpr uint32_t kPrivCreateUser = 1u << 8;
+inline constexpr uint32_t kPrivGrantOption = 1u << 9;
+inline constexpr uint32_t kPrivAll = kPrivSelect | kPrivInsert | kPrivUpdate | kPrivDelete | kPrivCreate | kPrivDrop | kPrivAlter
+    | kPrivIndex | kPrivCreateUser;
 
 struct Statement
 {
@@ -365,6 +468,7 @@ struct SetTerm
 struct CteDef
 {
     std::string name;
+    std::vector<std::string> column_names;
     std::shared_ptr<SelectStatement> query;
     bool recursive = false;
 };
@@ -389,6 +493,8 @@ struct SelectStatement : Statement
 struct CreateViewStatement : Statement
 {
     std::string name;
+    bool or_replace = false;
+    std::vector<std::string> column_names;
     StmtPtr query;
     CreateViewStatement() { type = StmtType::CreateView; }
 };
@@ -396,6 +502,7 @@ struct CreateViewStatement : Statement
 struct DropViewStatement : Statement
 {
     std::string name;
+    bool if_exists = false;
     DropViewStatement() { type = StmtType::DropView; }
 };
 
@@ -449,7 +556,9 @@ enum class AlterAction
 {
     AddColumn,
     DropColumn,
-    RenameTable
+    RenameTable,
+    AddPrimaryKey,
+    NoOp
 };
 
 struct AlterTableStatement : Statement
@@ -458,6 +567,7 @@ struct AlterTableStatement : Statement
     AlterAction action;
     ColumnDef column; // ADD COLUMN
     std::string target_name; // DROP COLUMN: column name; RENAME TO: new table name
+    std::vector<std::string> key_columns; // ADD PRIMARY KEY (...)
     AlterTableStatement() { type = StmtType::AlterTable; }
 };
 
@@ -479,9 +589,34 @@ struct ShowDatabasesStatement : Statement
 
 struct SetVarStatement : Statement
 {
-    std::string var_name;
+    std::string var_name; // lowercased, scope prefix stripped
     std::string value;
+    TxnScope scope = TxnScope::Session;
     SetVarStatement() { type = StmtType::SetVar; }
+};
+
+struct BeginStatement : Statement
+{
+    // BEGIN ISOLATION LEVEL ... / START TRANSACTION ISOLATION LEVEL ...
+    std::optional<IsolationLevel> isolation;
+    BeginStatement() { type = StmtType::Begin; }
+};
+
+struct CommitStatement : Statement
+{
+    CommitStatement() { type = StmtType::Commit; }
+};
+
+struct RollbackStatement : Statement
+{
+    RollbackStatement() { type = StmtType::Rollback; }
+};
+
+struct SetTransactionStatement : Statement
+{
+    TxnScope scope = TxnScope::Next;
+    IsolationLevel isolation = IsolationLevel::ReadCommitted;
+    SetTransactionStatement() { type = StmtType::SetTransaction; }
 };
 
 struct ShowVariablesStatement : Statement
@@ -501,8 +636,64 @@ struct SelectDatabaseStatement : Statement
 
 struct SelectSystemVarStatement : Statement
 {
-    std::string var_name;
+    std::vector<std::string> var_names;
+    std::vector<std::string> column_names;
     SelectSystemVarStatement() { type = StmtType::SelectSystemVar; }
+};
+
+// 'user'@'host' plus an optional password from IDENTIFIED BY.
+struct AccountName
+{
+    std::string user;
+    std::string host = "%";
+    std::string password;
+    bool has_password = false;
+    std::string plugin;
+};
+
+struct CreateUserStatement : Statement
+{
+    bool if_not_exists = false;
+    std::vector<AccountName> users;
+    CreateUserStatement() { type = StmtType::CreateUser; }
+};
+
+struct DropUserStatement : Statement
+{
+    bool if_exists = false;
+    std::vector<AccountName> users;
+    DropUserStatement() { type = StmtType::DropUser; }
+};
+
+struct AlterUserStatement : Statement
+{
+    AccountName user;
+    AlterUserStatement() { type = StmtType::AlterUser; }
+};
+
+struct GrantStatement : Statement
+{
+    uint32_t privs = 0;
+    std::string database = "*";
+    std::string table = "*";
+    std::vector<AccountName> users;
+    GrantStatement() { type = StmtType::Grant; }
+};
+
+struct RevokeStatement : Statement
+{
+    uint32_t privs = 0;
+    std::string database = "*";
+    std::string table = "*";
+    std::vector<AccountName> users;
+    RevokeStatement() { type = StmtType::Revoke; }
+};
+
+struct ShowGrantsStatement : Statement
+{
+    bool current_user = true;
+    AccountName user;
+    ShowGrantsStatement() { type = StmtType::ShowGrants; }
 };
 
 } // namespace popo::parser

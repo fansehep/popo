@@ -1,0 +1,18 @@
+# PopoDB 配置。服务从当前目录的 deploy/popodb.cnf 读取，
+# 也可以用 popodb-server --defaults-file=/path/to/popodb.cnf 指定。
+# 命令行里的端口会覆盖这里的 port，例如 popodb-server 3307。
+
+[popodb]
+port = 3307
+bind-address = 0.0.0.0
+# 相对路径从进程的工作目录算起
+datadir = data
+database = popo
+default-auth-plugin = caching_sha2_password
+
+# 只在 datadir 里还没有 popo_accounts 时，用来创建 root@'%'。
+# 账号文件已经存在时，这里和环境变量 POPO_PASSWORD 都不会改掉已有密码。
+root-password =
+
+# 1 表示 caching_sha2 即使快速校验通过，也要求客户端做 RSA 公钥交换。
+require-full-auth = 0

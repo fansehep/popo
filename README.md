@@ -1,156 +1,194 @@
-# PopoDB 数据库
+# PopoDB
 
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/w/cpp/23)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**PopoDB** 是一个用现代 C++23 从零构建的轻量级关系型数据库，兼容 MySQL 有线协议（MySQL Wire Protocol），支持通过标准 MySQL 客户端（`mysql` CLI、JDBC 等）直接连接。
+PopoDB 是一个使用 C++23 编写的关系型数据库。它提供 MySQL Wire Protocol
+兼容服务、MVCC 事务、WAL/ARIES 恢复、B+Tree 存储和一套面向 OLTP/OLAP
+查询的 SQL 执行引擎。
 
----
+> 项目仍处于开发阶段，适合学习数据库实现、功能验证与性能实验，暂不建议用于生产数据。
 
-## 特性
+## 核心能力
 
-- **MySQL 协议兼容** — 原生支持 MySQL Wire Protocol v10，任何 MySQL 客户端可直接连接
-- **完整 SQL 支持** — SELECT / INSERT / UPDATE / DELETE / CREATE TABLE / DROP TABLE
-- **高级查询** — WHERE 过滤、ORDER BY 排序、LIMIT 限制、聚合函数（COUNT / SUM / AVG / MIN / MAX）、多表 JOIN
-- **B+Tree 聚簇索引** — 主键数据与索引存储于同一 B+Tree，查询高效
-- **Undo 空间与事务** — 支持行级 MVCC 和多版本回滚
-- **字节码虚拟机** — SQL 经过 解析 → 规划 → 编译 生成自定义字节码，在 VM 中执行
-- **C++23 `std::expected<>` 错误处理** — 全链路统一错误处理，零异常开销
-- **类型系统** — INT8 / INT16 / INT32 / INT64 / FLOAT32 / FLOAT64 / STRING / BOOL / NULL
-
----
-
-## 演示
-
-在终端中通过 MySQL 客户端连接 PopoDB，执行建表、插入、查询、聚合、更新、删除全流程：
-
-![PopoDB Demo](demo.svg)
-
----
+- MySQL Protocol v10，可使用 `mysql` CLI、JDBC 等标准客户端连接。
+- `SELECT`、DML、DDL、视图、CTE、子查询、集合操作、窗口函数和常用标量/聚合函数。
+- INNER/LEFT/RIGHT/FULL JOIN、Hash Join、谓词下推和子查询缓存。
+- TPC-H Q1–Q22、RF1/RF2，以及 MySQL/PostgreSQL/DuckDB 常见 interval 写法。
+- 行级 MVCC，支持 READ UNCOMMITTED、READ COMMITTED、REPEATABLE READ 和 SERIALIZABLE。
+- WAL、崩溃恢复、Buffer Pool、聚簇主键和二级索引。
+- `caching_sha2_password`、`mysql_native_password`、`sha256_password`，以及用户、主机和权限管理。
+- 项目代码统一以 C++23 `std::expected`（`popo::base::Result<T>`）传递可恢复错误；第三方依赖不受此限制。
 
 ## 架构
 
+```text
+MySQL Client
+    │
+    ▼
+Protocol / Authentication / Session
+    │
+    ▼
+Lexer → Parser → Planner
+                    │
+          ┌─────────┴─────────┐
+          ▼                   ▼
+    Bytecode Compiler    Generic Executor
+          │                   │
+          └─────────┬─────────┘
+                    ▼
+             MVCC / Catalog
+                    ▼
+      Buffer Pool / B+Tree / WAL / Disk
+```
+
 ![PopoDB architecture](architecture.png)
 
----
+## 构建
 
-## 快速开始
+当前实现面向 Linux，并使用 `io_uring`。需要：
 
-### 依赖
-
-- C++23 编译器（GCC 15+ 或 Clang 19+）
+- 支持 C++23 的 GCC 或 Clang
 - CMake 3.20+
-- `mysql` 客户端（用于连接测试）
+- liburing、jemalloc、OpenSSL、zstd 和 pthread
+- MySQL/MariaDB 客户端与开发库（仅客户端连接和相关测试需要）
 
-### 编译
+以 Debian/Ubuntu 为例：
 
 ```bash
-git clone https://github.com/your/popodb.git
-cd popodb
-mkdir -p build2 && cd build2
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(nproc)
+sudo apt install build-essential cmake liburing-dev libjemalloc-dev \
+  libssl-dev libzstd-dev default-mysql-client libmariadb-dev
+
+git clone https://github.com/fansehep/neon.git
+cd neon
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
 ```
 
-### 启动服务
+## 启动与连接
+
+仓库内的默认配置位于 `deploy/popodb.cnf`：
 
 ```bash
-./popodb-server
-# 默认监听 127.0.0.1:3307
-```
-
-自定义端口：
-```bash
-./popodb-server 13306
-```
-
-### 连接
-
-```bash
+./build/src/popodb-server
 mysql -h 127.0.0.1 -P 3307 -u root
 ```
 
----
+指定配置文件或覆盖端口：
+
+```bash
+./build/src/popodb-server --defaults-file=/etc/popodb/popodb.cnf
+./build/src/popodb-server 13306
+```
+
+也可以通过环境变量覆盖初始认证配置：
+
+```bash
+POPO_PASSWORD=secret POPO_AUTH_PLUGIN=caching_sha2_password \
+  ./build/src/popodb-server
+```
+
+`deploy/popodb.service` 提供 systemd 示例，`deploy/init.sql` 提供用户与授权示例。
 
 ## SQL 示例
 
 ```sql
--- 建表
 CREATE TABLE users (
-    id INT PRIMARY KEY,
-    name VARCHAR(255),
-    age INT
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    age INT,
+    created_at DATE
 );
 
--- 插入
-INSERT INTO users (id, name, age) VALUES (1, 'Alice', 25);
-INSERT INTO users VALUES (2, 'Bob', 30), (3, 'Charlie', 35);
+INSERT INTO users VALUES
+    (1, 'Alice', 25, DATE '2026-01-01'),
+    (2, 'Bob',   30, DATE '2026-01-02');
 
--- 查询
-SELECT * FROM users;
-SELECT name, age FROM users WHERE age > 26;
-SELECT COUNT(*), AVG(age) FROM users;
+CREATE INDEX idx_users_age ON users(age);
 
--- 排序 & 限制
-SELECT * FROM users ORDER BY age DESC LIMIT 2;
+SELECT name, age
+FROM users
+WHERE age >= 25
+ORDER BY age DESC
+LIMIT 10;
 
--- 更新 & 删除
-UPDATE users SET age = age + 1 WHERE name = 'Alice';
-DELETE FROM users WHERE id = 3;
-
--- 删表
-DROP TABLE users;
+BEGIN;
+UPDATE users SET age = age + 1 WHERE id = 1;
+COMMIT;
 ```
 
----
+用户与权限：
 
-## 支持的 SQL
+```sql
+CREATE USER 'app'@'%' IDENTIFIED BY 'app_password';
+GRANT SELECT, INSERT, UPDATE, DELETE ON popo.* TO 'app'@'%';
+SHOW GRANTS FOR 'app'@'%';
+REVOKE DELETE ON popo.* FROM 'app'@'%';
+```
 
-| 语句 | 说明 |
-|------|------|
-| `CREATE TABLE` | 创建表（支持 PRIMARY KEY） |
-| `DROP TABLE [IF EXISTS]` | 删除表 |
-| `INSERT INTO ... VALUES` | 单行/多行插入 |
-| `SELECT ... FROM ...` | 查询 |
-| `SELECT ... WHERE ...` | 条件过滤（=, <>, <, <=, >, >=, AND, OR） |
-| `SELECT ... ORDER BY ...` | 排序（ASC / DESC） |
-| `SELECT ... LIMIT n` | 结果限制 |
-| `SELECT ... JOIN ... ON ...` | 嵌套循环连接 |
-| `SELECT COUNT/SUM/AVG/MIN/MAX(...)` | 聚合函数 |
-| `UPDATE ... SET ... WHERE ...` | 更新行 |
-| `DELETE FROM ... WHERE ...` | 删除行 |
-| `SHOW TABLES` | 显示所有表 |
-| `DESCRIBE table` | 显示表结构 |
+## SQL 覆盖范围
 
-### 数据类型
+- DDL：`CREATE/ALTER/DROP TABLE`、`CREATE/DROP INDEX`、`CREATE/DROP VIEW`
+- DML：`SELECT`、`INSERT`、`UPDATE`、`DELETE`
+- 查询：JOIN、GROUP BY、HAVING、ORDER BY、LIMIT/OFFSET、DISTINCT
+- 高级查询：CTE/递归 CTE、派生表、相关/非相关子查询、UNION/INTERSECT/EXCEPT、窗口函数
+- 事务：`BEGIN`、`COMMIT`、`ROLLBACK`、`SET TRANSACTION`、`SET autocommit`
+- 管理：`SHOW TABLES`、`DESCRIBE`、`SHOW VARIABLES/STATUS`
+- 账号：`CREATE/ALTER/DROP USER`、`GRANT`、`REVOKE`、`SHOW GRANTS`
+- 类型：整数、浮点数、`DECIMAL`、`VARCHAR/TEXT`、`BOOL`、`DATE`、`NULL`
 
-`TINYINT` / `SMALLINT` / `INT` / `BIGINT` / `FLOAT` / `DOUBLE` / `VARCHAR(n)` / `TEXT` / `BOOL`
+## 配置
 
----
+`deploy/popodb.cnf` 使用 MySQL 风格的 ini 格式，主要选项包括：
+
+```ini
+[popodb]
+port = 3307
+bind-address = 0.0.0.0
+datadir = data
+database = popo
+default-auth-plugin = caching_sha2_password
+root-password =
+require-full-auth = 0
+```
+
+账号数据保存在 `datadir` 下的 `popo_accounts`。`root-password` 只用于首次创建账号文件，
+不会覆盖已经存在的 root 密码。
+
+## 测试与代码质量
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure -j"$(nproc)"
+
+# 检查项目代码是否误用了异常、std::sto* 或 .value()
+cmake --build build --target check_expected_errors
+```
+
+SQL 测试覆盖 TPC-H Q1–Q22、刷新函数、事务隔离、恢复、认证和权限。MySQL
+对比集成测试在本机没有可用 MySQL 8.0 时会自动跳过。
+
+代码风格与静态检查配置分别位于 `.clang-format` 和 `.clang-tidy`。
 
 ## 项目结构
 
-```
+```text
 src/
-├── base/           # 基础设施（错误处理、宏）
-├── parser/         # SQL 词法分析 & 语法分析
-├── planner/        # 逻辑计划生成
-├── bytecode/       # 字节码定义、编译器、虚拟机
-├── catalog/        # 元数据管理（Schema、Column）
-├── expression/     # 表达式求值
-├── storage/        # 存储引擎（B+Tree、BufferPool、DiskManager、Undo）
-├── type/           # 类型系统（Value、Tuple）
-├── server/         # 网络服务（MySQL 协议、Session）
-└── trancation/     # 事务管理（MVCC）
-tests/
-├── bytecode/       # 编译器 & VM 单元测试
-├── storage/        # 存储引擎单元测试 & 压力测试
-├── catalog/        # Schema 管理测试
-└── integration/    # SQL 集成测试（对比 MySQL 8.0）
+├── base/         # Result<T>、错误与基础设施
+├── parser/       # Lexer、AST、Parser
+├── planner/      # 逻辑计划与优化
+├── executor/     # 通用 SQL 执行器
+├── bytecode/     # 字节码编译器与虚拟机
+├── catalog/      # Schema、视图与索引元数据
+├── storage/      # Buffer Pool、B+Tree、WAL、恢复
+├── trancation/   # MVCC 与事务管理
+├── server/       # MySQL 协议、认证、账号与 Session
+└── type/         # Value 与 Row
+deploy/           # 配置、初始化 SQL、systemd 示例
+tests/            # 单元、SQL、TPC-H、恢复及服务端测试
 ```
 
----
+## License
 
-## 许可证
-
-MIT License
+[MIT License](LICENSE)

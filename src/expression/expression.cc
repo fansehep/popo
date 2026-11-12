@@ -1,20 +1,19 @@
 #include "src/expression/expression.h"
-#include <stdexcept>
 #include "src/base/error.h"
 
 namespace popo::expression
 {
 
-// Expression基类不需要实现，因为它是纯虚类
+using popo::base::Errno;
+using popo::base::make_error;
 
-// LiteralExpression实现
 LiteralExpression::LiteralExpression(const Value & value) : value_(value)
 {
 }
 
-std::pair<bool, Value> LiteralExpression::evaluate(const Row & row)
+Result<Value> LiteralExpression::evaluate(const Row & /*row*/)
 {
-    return std::make_pair(true, value_);
+    return value_;
 }
 
 popo::type::ValueType LiteralExpression::get_type() const
@@ -22,20 +21,17 @@ popo::type::ValueType LiteralExpression::get_type() const
     return value_.datatype();
 }
 
-// ColumnExpression实现
 ColumnExpression::ColumnExpression(size_t column_index, popo::type::ValueType type) : column_index_(column_index), type_(type)
 {
 }
 
-std::pair<bool, Value> ColumnExpression::evaluate(const Row & row)
+Result<Value> ColumnExpression::evaluate(const Row & row)
 {
     if (column_index_ >= row.values_.size())
     {
-        // 列索引超出范围
-        return std::make_pair(false, Value());
+        return make_error(Errno::InvalidArg, "column index out of range");
     }
-
-    return std::make_pair(true, row.values_[column_index_]);
+    return row.values_[column_index_];
 }
 
 popo::type::ValueType ColumnExpression::get_type() const
@@ -43,49 +39,43 @@ popo::type::ValueType ColumnExpression::get_type() const
     return type_;
 }
 
-// BinaryExpression实现
 BinaryExpression::BinaryExpression(ExpressionRef left, ExpressionRef right) : left_(std::move(left)), right_(std::move(right))
 {
 }
 
 popo::type::ValueType BinaryExpression::get_type() const
 {
-    // 默认返回布尔类型，具体子类可以覆盖
     return popo::type::ValueType::Bool;
 }
 
-// ComparisonExpression实现
 ComparisonExpression::ComparisonExpression(ComparisonType type, ExpressionRef left, ExpressionRef right)
     : BinaryExpression(std::move(left), std::move(right)), type_(type)
 {
 }
 
-std::pair<bool, Value> ComparisonExpression::evaluate(const Row & row)
+Result<Value> ComparisonExpression::evaluate(const Row & row)
 {
-    // 计算左右操作数
     auto left_result = left_->evaluate(row);
-    if (!left_result.first)
+    if (!left_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(left_result.error());
     }
 
     auto right_result = right_->evaluate(row);
-    if (!right_result.first)
+    if (!right_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(right_result.error());
     }
 
-    const auto & left_value = left_result.second;
-    const auto & right_value = right_result.second;
+    const auto & left_value = *left_result;
+    const auto & right_value = *right_result;
 
-    // 检查类型是否匹配
     if (left_value.datatype() != right_value.datatype())
     {
-        return std::make_pair(false, Value());
+        return make_error(Errno::InvalidArg, "comparison operand types do not match");
     }
 
     bool result = false;
-
     switch (type_)
     {
         case ComparisonType::EQUAL:
@@ -108,7 +98,7 @@ std::pair<bool, Value> ComparisonExpression::evaluate(const Row & row)
             break;
     }
 
-    return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
+    return Value(popo::type::ValueType::Bool, result);
 }
 
 popo::type::ValueType ComparisonExpression::get_type() const
@@ -116,218 +106,144 @@ popo::type::ValueType ComparisonExpression::get_type() const
     return popo::type::ValueType::Bool;
 }
 
-// ArithmeticExpression实现
 ArithmeticExpression::ArithmeticExpression(ArithmeticType type, ExpressionRef left, ExpressionRef right)
     : BinaryExpression(std::move(left), std::move(right)), type_(type)
 {
 }
 
-std::pair<bool, Value> ArithmeticExpression::evaluate(const Row & row)
+Result<Value> ArithmeticExpression::evaluate(const Row & row)
 {
-    // 计算左右操作数
     auto left_result = left_->evaluate(row);
-    if (!left_result.first)
+    if (!left_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(left_result.error());
     }
 
     auto right_result = right_->evaluate(row);
-    if (!right_result.first)
+    if (!right_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(right_result.error());
     }
 
-    const auto & left_value = left_result.second;
-    const auto & right_value = right_result.second;
+    const auto & left_value = *left_result;
+    const auto & right_value = *right_result;
 
-    // 检查是否为数值类型
     if (!left_value.is_numeric() || !right_value.is_numeric())
     {
-        return std::make_pair(false, Value());
+        return make_error(Errno::InvalidArg, "arithmetic operands must be numeric");
     }
 
-    // 确定结果类型（取精度较高的类型）
     popo::type::ValueType result_type = left_value.datatype();
     if (right_value.datatype() > result_type)
     {
         result_type = right_value.datatype();
     }
 
-    // 执行算术运算
     switch (type_)
     {
         case ArithmeticType::ADD: {
             if (result_type == popo::type::ValueType::Int32)
-            {
-                int32_t result = left_value.i32() + right_value.i32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Int64)
-            {
-                int64_t result = left_value.i64() + right_value.i64();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float32)
-            {
-                float result = left_value.f32() + right_value.f32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float64)
-            {
-                double result = left_value.f64() + right_value.f64();
-                return std::make_pair(true, Value(result_type, result));
-            }
+                return Value(result_type, left_value.i32() + right_value.i32());
+            if (result_type == popo::type::ValueType::Int64)
+                return Value(result_type, left_value.i64() + right_value.i64());
+            if (result_type == popo::type::ValueType::Float32)
+                return Value(result_type, left_value.f32() + right_value.f32());
+            if (result_type == popo::type::ValueType::Float64)
+                return Value(result_type, left_value.f64() + right_value.f64());
             break;
         }
         case ArithmeticType::SUBTRACT: {
             if (result_type == popo::type::ValueType::Int32)
-            {
-                int32_t result = left_value.i32() - right_value.i32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Int64)
-            {
-                int64_t result = left_value.i64() - right_value.i64();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float32)
-            {
-                float result = left_value.f32() - right_value.f32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float64)
-            {
-                double result = left_value.f64() - right_value.f64();
-                return std::make_pair(true, Value(result_type, result));
-            }
+                return Value(result_type, left_value.i32() - right_value.i32());
+            if (result_type == popo::type::ValueType::Int64)
+                return Value(result_type, left_value.i64() - right_value.i64());
+            if (result_type == popo::type::ValueType::Float32)
+                return Value(result_type, left_value.f32() - right_value.f32());
+            if (result_type == popo::type::ValueType::Float64)
+                return Value(result_type, left_value.f64() - right_value.f64());
             break;
         }
         case ArithmeticType::MULTIPLY: {
             if (result_type == popo::type::ValueType::Int32)
-            {
-                int32_t result = left_value.i32() * right_value.i32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Int64)
-            {
-                int64_t result = left_value.i64() * right_value.i64();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float32)
-            {
-                float result = left_value.f32() * right_value.f32();
-                return std::make_pair(true, Value(result_type, result));
-            }
-            else if (result_type == popo::type::ValueType::Float64)
-            {
-                double result = left_value.f64() * right_value.f64();
-                return std::make_pair(true, Value(result_type, result));
-            }
+                return Value(result_type, left_value.i32() * right_value.i32());
+            if (result_type == popo::type::ValueType::Int64)
+                return Value(result_type, left_value.i64() * right_value.i64());
+            if (result_type == popo::type::ValueType::Float32)
+                return Value(result_type, left_value.f32() * right_value.f32());
+            if (result_type == popo::type::ValueType::Float64)
+                return Value(result_type, left_value.f64() * right_value.f64());
             break;
         }
         case ArithmeticType::DIVIDE: {
             if (result_type == popo::type::ValueType::Int32)
             {
                 if (right_value.i32() == 0)
-                {
-                    return std::make_pair(false, Value());
-                }
-                int32_t result = left_value.i32() / right_value.i32();
-                return std::make_pair(true, Value(result_type, result));
+                    return make_error(Errno::InvalidArg, "division by zero");
+                return Value(result_type, left_value.i32() / right_value.i32());
             }
-            else if (result_type == popo::type::ValueType::Int64)
+            if (result_type == popo::type::ValueType::Int64)
             {
                 if (right_value.i64() == 0)
-                {
-                    return std::make_pair(false, Value());
-                }
-                int64_t result = left_value.i64() / right_value.i64();
-                return std::make_pair(true, Value(result_type, result));
+                    return make_error(Errno::InvalidArg, "division by zero");
+                return Value(result_type, left_value.i64() / right_value.i64());
             }
-            else if (result_type == popo::type::ValueType::Float32)
+            if (result_type == popo::type::ValueType::Float32)
             {
                 if (right_value.f32() == 0.0f)
-                {
-                    return std::make_pair(false, Value());
-                }
-                float result = left_value.f32() / right_value.f32();
-                return std::make_pair(true, Value(result_type, result));
+                    return make_error(Errno::InvalidArg, "division by zero");
+                return Value(result_type, left_value.f32() / right_value.f32());
             }
-            else if (result_type == popo::type::ValueType::Float64)
+            if (result_type == popo::type::ValueType::Float64)
             {
                 if (right_value.f64() == 0.0)
-                {
-                    return std::make_pair(false, Value());
-                }
-                double result = left_value.f64() / right_value.f64();
-                return std::make_pair(true, Value(result_type, result));
+                    return make_error(Errno::InvalidArg, "division by zero");
+                return Value(result_type, left_value.f64() / right_value.f64());
             }
             break;
         }
     }
 
-    return std::make_pair(false, Value());
+    return make_error(Errno::InvalidArg, "unsupported arithmetic type");
 }
 
 popo::type::ValueType ArithmeticExpression::get_type() const
 {
-    // 返回数值类型
-    return popo::type::ValueType::Int64; // 简化处理，实际应根据操作数类型确定
+    return popo::type::ValueType::Int64;
 }
 
-// LogicalExpression实现
 LogicalExpression::LogicalExpression(LogicalType type, ExpressionRef left, ExpressionRef right)
     : BinaryExpression(std::move(left), std::move(right)), type_(type)
 {
 }
 
-std::pair<bool, Value> LogicalExpression::evaluate(const Row & row)
+Result<Value> LogicalExpression::evaluate(const Row & row)
 {
-    // 计算左操作数
     auto left_result = left_->evaluate(row);
-    if (!left_result.first)
+    if (!left_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(left_result.error());
     }
 
-    // 对于AND和OR，需要计算右操作数
     if (type_ == LogicalType::AND || type_ == LogicalType::OR)
     {
         auto right_result = right_->evaluate(row);
-        if (!right_result.first)
+        if (!right_result)
         {
-            return std::make_pair(false, Value());
+            return std::unexpected(right_result.error());
         }
 
-        // 检查操作数是否为布尔类型
-        if (left_result.second.datatype() != popo::type::ValueType::Bool || right_result.second.datatype() != popo::type::ValueType::Bool)
+        if (left_result->datatype() != popo::type::ValueType::Bool || right_result->datatype() != popo::type::ValueType::Bool)
         {
-            return std::make_pair(false, Value());
+            return make_error(Errno::InvalidArg, "logical operands must be boolean");
         }
 
-        bool left_bool = left_result.second.boolean();
-        bool right_bool = right_result.second.boolean();
-        bool result = false;
-
-        switch (type_)
-        {
-            case LogicalType::AND:
-                result = left_bool && right_bool;
-                break;
-            case LogicalType::OR:
-                result = left_bool || right_bool;
-                break;
-            default:
-                return std::make_pair(false, Value());
-        }
-
-        return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
+        bool left_bool = left_result->boolean();
+        bool right_bool = right_result->boolean();
+        bool result = (type_ == LogicalType::AND) ? (left_bool && right_bool) : (left_bool || right_bool);
+        return Value(popo::type::ValueType::Bool, result);
     }
-    else
-    {
-        // NOT操作已经在NotExpression中实现
-        return std::make_pair(false, Value());
-    }
+
+    return make_error(Errno::InvalidArg, "unsupported logical operator");
 }
 
 popo::type::ValueType LogicalExpression::get_type() const
@@ -335,7 +251,6 @@ popo::type::ValueType LogicalExpression::get_type() const
     return popo::type::ValueType::Bool;
 }
 
-// UnaryExpression实现
 UnaryExpression::UnaryExpression(ExpressionRef operand) : operand_(std::move(operand))
 {
 }
@@ -345,29 +260,24 @@ popo::type::ValueType UnaryExpression::get_type() const
     return popo::type::ValueType::Bool;
 }
 
-// NotExpression实现
 NotExpression::NotExpression(ExpressionRef operand) : UnaryExpression(std::move(operand))
 {
 }
 
-std::pair<bool, Value> NotExpression::evaluate(const Row & row)
+Result<Value> NotExpression::evaluate(const Row & row)
 {
     auto operand_result = operand_->evaluate(row);
-    if (!operand_result.first)
+    if (!operand_result)
     {
-        return std::make_pair(false, Value());
+        return std::unexpected(operand_result.error());
     }
 
-    // 检查操作数是否为布尔类型
-    if (operand_result.second.datatype() != popo::type::ValueType::Bool)
+    if (operand_result->datatype() != popo::type::ValueType::Bool)
     {
-        return std::make_pair(false, Value());
+        return make_error(Errno::InvalidArg, "NOT operand must be boolean");
     }
 
-    bool operand_bool = operand_result.second.boolean();
-    bool result = !operand_bool;
-
-    return std::make_pair(true, Value(popo::type::ValueType::Bool, result));
+    return Value(popo::type::ValueType::Bool, !operand_result->boolean());
 }
 
 popo::type::ValueType NotExpression::get_type() const

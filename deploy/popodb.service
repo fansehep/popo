@@ -1,0 +1,12 @@
+[Unit]
+Description=PopoDB
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/lib/popodb
+ExecStart=/usr/local/bin/popodb-server --defaults-file=/etc/popodb/popodb.cnf
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

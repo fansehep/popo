@@ -4,7 +4,6 @@
 #include <cerrno>
 #include <cstring>
 #include <liburing.h>
-#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,17 +28,20 @@ popo::base::Result<void> fail(const char * what, int err)
 struct IoRing::Impl
 {
     io_uring ring{};
+    int init_rc = 0;
 
     Impl()
     {
-        int rc = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
-        if (rc < 0)
-        {
-            throw std::runtime_error(std::string("io_uring_queue_init: ") + std::strerror(-rc));
-        }
+        init_rc = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
     }
 
-    ~Impl() { io_uring_queue_exit(&ring); }
+    ~Impl()
+    {
+        if (init_rc == 0)
+        {
+            io_uring_queue_exit(&ring);
+        }
+    }
 
     // Reaps one completion and reports it through res. Returns false only when
     // the ring itself failed; the operation result stays in res either way.
@@ -64,8 +66,18 @@ IoRing::IoRing() : impl_(std::make_unique<Impl>()) {}
 
 IoRing::~IoRing() = default;
 
+popo::base::Result<void> IoRing::status() const
+{
+    if (impl_->init_rc < 0)
+    {
+        return fail("io_uring_queue_init", -impl_->init_rc);
+    }
+    return {};
+}
+
 popo::base::Result<void> IoRing::read_at(int fd, void * buf, uint32_t len, uint64_t offset)
 {
+    POPO_TRY(status());
     auto * cursor = static_cast<char *>(buf);
     uint32_t left = len;
     while (left > 0)
@@ -105,6 +117,7 @@ popo::base::Result<void> IoRing::read_at(int fd, void * buf, uint32_t len, uint6
 
 popo::base::Result<void> IoRing::write_at(int fd, const void * buf, uint32_t len, uint64_t offset)
 {
+    POPO_TRY(status());
     auto * cursor = static_cast<const char *>(buf);
     uint32_t left = len;
     while (left > 0)
@@ -147,6 +160,7 @@ popo::base::Result<void> IoRing::fsync(int fd)
 
 popo::base::Result<void> IoRing::write_batch(int fd, const Write * writes, size_t count)
 {
+    POPO_TRY(status());
     size_t base = 0;
     while (base < count)
     {
@@ -237,6 +251,7 @@ popo::base::Result<void> IoRing::sync_writes(int fd, const Write * writes, size_
 
 popo::base::Result<void> IoRing::write_and_fsync(int fd, const void * buf, uint32_t len, uint64_t offset, bool data_sync)
 {
+    POPO_TRY(status());
     auto * cursor = static_cast<const char *>(buf);
     uint32_t left = len;
     while (left > 0)
@@ -302,6 +317,7 @@ popo::base::Result<void> IoRing::write_and_fsync(int fd, const void * buf, uint3
 
 popo::base::Result<void> IoRing::fsync_impl(int fd, bool data_sync)
 {
+    POPO_TRY(status());
     io_uring_sqe * sqe = io_uring_get_sqe(&impl_->ring);
     if (sqe == nullptr)
     {

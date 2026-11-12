@@ -7,14 +7,14 @@ TxnManager::TxnManager(popo::storage::RedoLogManager * redo_log) : redo_log_(red
 {
 }
 
-Transaction * TxnManager::begin_txn()
+popo::base::Result<Transaction *> TxnManager::begin_txn()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto & entry : active_txns_)
     {
         if (entry.second->is_running())
         {
-            throw std::runtime_error("only one transaction is supported");
+            return popo::base::make_error(popo::base::Errno::InternalErr, "only one transaction is supported");
         }
     }
 

@@ -135,8 +135,8 @@ sudo apt install -y build-essential cmake pkg-config \
 ### Build
 
 ```bash
-git clone https://github.com/fansehep/neon.git
-cd neon
+git clone https://github.com/fansehep/popo.git
+cd popo
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"

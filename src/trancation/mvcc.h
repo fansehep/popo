@@ -12,6 +12,7 @@
 #include "src/base/error.h"
 #include "src/storage/common.h"
 #include "src/storage/redo_log.h"
+#include "src/storage/table_heap.h"
 #include "src/trancation/txn.h"
 #include "src/type/tuple.h"
 
@@ -25,15 +26,32 @@ namespace popo::txn
 
 // Multi-version concurrency control with ARIES write-ahead logging.
 //
-// The committed version store is the read authority for snapshot reads; the
-// B+Tree heap is the persisted "current committed" image, installed synchronously
-// at commit. Writers buffer their changes in a per-transaction overlay and only
-// publish them at commit (no-steal), so readers never block writers and a crash
-// leaves no uncommitted data on shared pages. Recovery repeats history (redo of
-// committed work) and rolls back losers.
+// The B+Tree heap is the read authority for the current committed image.
+// versions_ contains only touched-key history while an active snapshot needs it.
+// Writers buffer their changes in a per-transaction overlay and only
+// publish them at commit (no-steal), so a crash leaves no uncommitted data on
+// shared pages. Recovery repeats history (redo of committed work) and rolls
+// back losers.
 class MvccManager
 {
 public:
+    class Cursor
+    {
+    public:
+        Cursor(Cursor &&) noexcept;
+        Cursor & operator=(Cursor &&) noexcept;
+        ~Cursor();
+
+        // Produces the next visible row in primary-key order.
+        bool next(popo::type::Row & row);
+
+    private:
+        struct Impl;
+        explicit Cursor(std::unique_ptr<Impl> impl);
+        std::unique_ptr<Impl> impl_;
+        friend class MvccManager;
+    };
+
     MvccManager(popo::storage::StorageEngine * engine, popo::storage::RedoLogManager * redo_log);
     ~MvccManager();
 
@@ -57,8 +75,13 @@ public:
     stage_update(Transaction * txn, const std::string & table, const popo::type::Value & pk, const popo::type::Row & row);
     popo::base::Result<void> stage_delete(Transaction * txn, const std::string & table, const popo::type::Value & pk);
 
-    // Snapshot reads. Return rows visible to the transaction in PK order.
+    // Snapshot reads. The cursor retains only its current row and merges the
+    // B+Tree, incremental history, and own overlay in primary-key order.
+    Cursor scan_cursor(
+        Transaction * txn, const std::string & table, const std::optional<popo::type::Value> & low = std::nullopt,
+        const std::optional<popo::type::Value> & high = std::nullopt);
     std::vector<popo::type::Row> scan(Transaction * txn, const std::string & table);
+    int64_t count(Transaction * txn, const std::string & table);
     std::optional<popo::type::Row> lookup(Transaction * txn, const std::string & table, const popo::type::Value & pk);
     // Latest committed row, without opening a transaction. Equivalent to a
     // single-statement autocommit read at any isolation level, and lets the
@@ -79,7 +102,7 @@ public:
     uint64_t snapshot_csn_for(Transaction * txn);
 
     // ---- Persistence / recovery hooks ----
-    // Rebuild the current committed version store from the heap after recovery.
+    // Recovery leaves the committed baseline in the B+Tree; no table copy is made.
     void rebuild_from_heap(const std::string & table);
     void forget_table(const std::string & table);
     // Latest committed row per primary key (for checkpoint compaction).
@@ -92,10 +115,13 @@ public:
     // Drop version history no active snapshot can observe.
     void garbage_collect();
 
+    // Test/diagnostic hook: number of rows retained in incremental history.
+    size_t retained_version_count() const;
+
 private:
     struct Version
     {
-        popo::type::Row row;
+        std::optional<popo::type::Row> row; // disengaged is a committed tombstone
         uint64_t begin_csn = 0; // commit that created this version
         uint64_t end_csn = UINT64_MAX; // commit that deleted/superseded it
     };

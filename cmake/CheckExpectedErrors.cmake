@@ -3,6 +3,8 @@ file(
     LIST_DIRECTORIES false
     "${PROJECT_ROOT}/src/*.h"
     "${PROJECT_ROOT}/src/*.cc"
+    "${PROJECT_ROOT}/bench/*.h"
+    "${PROJECT_ROOT}/bench/*.cc"
     "${PROJECT_ROOT}/tests/*.h"
     "${PROJECT_ROOT}/tests/*.cc"
     "${PROJECT_ROOT}/tests/*.cpp"

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <functional>
@@ -37,6 +38,20 @@ std::unexpected<popo::base::Error> executor_error(
     std::string message, popo::base::Errno code = popo::base::Errno::InvalidArg)
 {
     return popo::base::make_error(code, std::move(message));
+}
+
+Executor::Options default_executor_options()
+{
+    Executor::Options options;
+    if (const char * raw = std::getenv("POPO_EXECUTOR_MEMORY_BYTES"))
+    {
+        auto parsed = popo::base::parse_i64(raw);
+        if (parsed && *parsed >= 4096)
+            options.memory_limit_bytes = static_cast<size_t>(*parsed);
+    }
+    if (const char * directory = std::getenv("POPO_EXECUTOR_TEMP_DIR"))
+        options.temp_directory = directory;
+    return options;
 }
 
 bool is_null(const Value & v)
@@ -852,7 +867,14 @@ std::vector<std::string> Executor::Batch::flat_names() const
 }
 
 Executor::Executor(popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine)
-    : schema_mgr_(schema_mgr), engine_(engine), planner_(schema_mgr)
+    : Executor(schema_mgr, engine, default_executor_options())
+{
+}
+
+Executor::Executor(
+    popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine,
+    Options options)
+    : schema_mgr_(schema_mgr), engine_(engine), planner_(schema_mgr), options_(std::move(options))
 {
 }
 
@@ -1337,8 +1359,13 @@ Executor::execute(const popo::planner::PlanNodePtr & plan, popo::txn::Transactio
     result_ = popo::bytecode::ExecuteSuccess();
     subquery_plans_.clear();
     uncorrelated_subqueries_.clear();
+    correlated_subqueries_.clear();
     materialized_.clear();
+    stream_materialized_.clear();
     recursive_inputs_.clear();
+    spill_stats_ = {};
+    memory_ = std::make_unique<MemoryTracker>(std::max<size_t>(options_.memory_limit_bytes, 4096));
+    temp_ = std::make_unique<TempFileManager>(options_.temp_directory);
     min_env_depth_seen_ = std::numeric_limits<int>::max();
     own_txn_ = outer_txn == nullptr;
     txn_ = own_txn_ ? engine_.begin_txn() : outer_txn;
@@ -1349,6 +1376,15 @@ Executor::execute(const popo::planner::PlanNodePtr & plan, popo::txn::Transactio
             engine_.abort_txn(txn_);
         }
         txn_ = nullptr;
+        if (memory_)
+            spill_stats_.peak_memory_bytes = memory_->peak();
+        if (temp_)
+        {
+            spill_stats_.files_created = temp_->files_created();
+            spill_stats_.bytes_written = temp_->bytes_written();
+        }
+        temp_.reset();
+        memory_.reset();
         return std::unexpected(std::move(error));
     };
     if (!plan)
@@ -1380,13 +1416,16 @@ Executor::execute(const popo::planner::PlanNodePtr & plan, popo::txn::Transactio
             break;
         default: {
             auto opt_plan = optimize_plan(plan, false);
-            auto batch_result = exec_batch(opt_plan, nullptr);
-            if (!batch_result)
-                return fail(batch_result.error());
-            auto batch = std::move(*batch_result);
-            result_.columns = batch.flat_names();
-            for (auto & row : batch.rows)
-                result_.rows.push_back(std::make_shared<Row>(std::move(row)));
+            auto streamed = stream_rows(
+                opt_plan, nullptr,
+                [&](StreamItem && item, const Batch &) -> popo::base::Result<bool>
+                {
+                    result_.rows.push_back(std::make_shared<Row>(std::move(item.row)));
+                    return true;
+                });
+            if (!streamed)
+                return fail(streamed.error());
+            result_.columns = streamed->flat_names();
             break;
         }
     }
@@ -1414,6 +1453,11 @@ Executor::execute(const popo::planner::PlanNodePtr & plan, popo::txn::Transactio
     {
         result_.message = "OK";
     }
+    spill_stats_.peak_memory_bytes = memory_ ? memory_->peak() : 0;
+    spill_stats_.files_created = temp_ ? temp_->files_created() : 0;
+    spill_stats_.bytes_written = temp_ ? temp_->bytes_written() : 0;
+    temp_.reset();
+    memory_.reset();
     return result_;
 }
 
@@ -1437,8 +1481,24 @@ Executor::exec_batch(const popo::planner::PlanNodePtr & node, const EvalEnv * ou
             return exec_filter(static_cast<const popo::planner::FilterNode &>(*node), outer);
         case popo::planner::PlanNodeType::Project:
             return exec_project(static_cast<const popo::planner::ProjectNode &>(*node), outer);
-        case popo::planner::PlanNodeType::Join:
-            return exec_join(static_cast<const popo::planner::JoinNode &>(*node), outer);
+        case popo::planner::PlanNodeType::Join: {
+            auto joined = exec_join(
+                static_cast<const popo::planner::JoinNode &>(*node), outer);
+            if (!joined || !joined->spilled_rows)
+                return joined;
+            SpillReader reader(*joined->spilled_rows);
+            for (;;)
+            {
+                auto row = reader.next();
+                if (!row)
+                    return std::unexpected(row.error());
+                if (!*row)
+                    break;
+                joined->rows.push_back(std::move(**row));
+            }
+            joined->spilled_rows.reset();
+            return joined;
+        }
         case popo::planner::PlanNodeType::Agg:
             return exec_agg(static_cast<const popo::planner::AggNode &>(*node), outer);
         case popo::planner::PlanNodeType::Sort:
@@ -1456,6 +1516,362 @@ Executor::exec_batch(const popo::planner::PlanNodePtr & node, const EvalEnv * ou
         default:
             return executor_error("unsupported plan node in executor", popo::base::Errno::InternalErr);
     }
+}
+
+popo::base::Result<Executor::Batch> Executor::stream_rows(
+    const popo::planner::PlanNodePtr & node, const EvalEnv * outer,
+    const StreamConsumer & consumer)
+{
+    if (!node)
+        return Batch{};
+    using popo::planner::PlanNodeType;
+    if (node->type == PlanNodeType::Scan)
+    {
+        const auto & scan = static_cast<const popo::planner::ScanNode &>(*node);
+        auto qr = schema_mgr_.query_table(scan.table_name);
+        if (!qr || !*qr)
+            return executor_error(
+                std::format("Table '{}' not found", scan.table_name),
+                popo::base::Errno::TableNotFound);
+        Batch layout;
+        ColumnSchema cs;
+        cs.table = scan.alias.empty() ? scan.table_name : scan.alias;
+        cs.alias = scan.alias;
+        if (!scan.column_names.empty())
+            cs.columns = scan.column_names;
+        else
+            for (const auto & column : (*qr)->columns_)
+                cs.columns.push_back(column.column_name_);
+        layout.schemas.push_back(std::move(cs));
+        auto cursor = engine_.mvcc()->scan_cursor(txn_, scan.table_name);
+        Row row;
+        while (cursor.next(row))
+        {
+            POPO_ASSIGN_OR_RETURN(
+                bool keep_going, consumer(StreamItem{std::move(row), {}}, layout));
+            if (!keep_going)
+                break;
+            row = Row{};
+        }
+        return layout;
+    }
+    if (node->type == PlanNodeType::Dual)
+    {
+        Batch layout;
+        POPO_ASSIGN_OR_RETURN(bool ignored, consumer(StreamItem{Row{}, {}}, layout));
+        (void) ignored;
+        return layout;
+    }
+    if (node->type == PlanNodeType::SubqueryScan)
+    {
+        const auto & subquery = static_cast<const popo::planner::SubqueryScanNode &>(*node);
+        if (subquery.recursive)
+        {
+            POPO_ASSIGN_OR_RETURN(Batch batch, exec_subquery_scan(subquery, outer));
+            Batch layout;
+            layout.schemas = batch.schemas;
+            for (auto & row : batch.rows)
+            {
+                POPO_ASSIGN_OR_RETURN(
+                    bool keep_going, consumer(StreamItem{std::move(row), {}}, layout));
+                if (!keep_going)
+                    break;
+            }
+            return layout;
+        }
+        auto alias_layout = [&](const Batch & child)
+        {
+            Batch layout;
+            ColumnSchema schema;
+            schema.table = subquery.alias;
+            schema.alias = subquery.alias;
+            schema.columns = subquery.column_names.empty()
+                ? child.flat_names() : subquery.column_names;
+            layout.schemas.push_back(std::move(schema));
+            return layout;
+        };
+        if (!subquery.cte_name.empty())
+        {
+            auto cached = stream_materialized_.find(subquery.child.get());
+            if (cached != stream_materialized_.end())
+            {
+                Batch output_layout = alias_layout(cached->second.layout);
+                SpillReader reader(cached->second.path);
+                for (;;)
+                {
+                    auto row = reader.next();
+                    if (!row)
+                        return std::unexpected(row.error());
+                    if (!*row)
+                        break;
+                    POPO_ASSIGN_OR_RETURN(
+                        bool keep_going,
+                        consumer(StreamItem{std::move(**row), {}}, output_layout));
+                    if (!keep_going)
+                        break;
+                }
+                return output_layout;
+            }
+            if (!temp_)
+                return executor_error(
+                    "CTE spill context is not initialized",
+                    popo::base::Errno::InternalErr);
+            auto path = temp_->create("materialized-cte");
+            if (!path)
+                return std::unexpected(path.error());
+            SpillWriter writer(*path, temp_.get());
+            Batch output_layout;
+            bool downstream_open = true;
+            auto child = stream_rows(
+                optimize_plan(subquery.child, false), nullptr,
+                [&](StreamItem && item, const Batch & child_layout)
+                    -> popo::base::Result<bool>
+                {
+                    if (output_layout.schemas.empty())
+                        output_layout = alias_layout(child_layout);
+                    POPO_TRY(writer.write(item.row));
+                    if (downstream_open)
+                    {
+                        POPO_ASSIGN_OR_RETURN(
+                            downstream_open,
+                            consumer(
+                                StreamItem{
+                                    std::move(item.row), std::move(item.aggs)},
+                                output_layout));
+                    }
+                    // Finish the shared materialization even if this consumer
+                    // stopped early, so later references see the complete CTE.
+                    return true;
+                });
+            if (!child)
+                return std::unexpected(child.error());
+            if (output_layout.schemas.empty())
+                output_layout = alias_layout(*child);
+            POPO_TRY(writer.close());
+            stream_materialized_.emplace(
+                subquery.child.get(), StreamMaterialized{*child, *path});
+            return output_layout;
+        }
+
+        Batch output_layout;
+        auto child = stream_rows(
+            subquery.child, outer,
+            [&](StreamItem && item, const Batch & child_layout)
+                -> popo::base::Result<bool>
+            {
+                if (output_layout.schemas.empty())
+                    output_layout = alias_layout(child_layout);
+                return consumer(std::move(item), output_layout);
+            });
+        if (!child)
+            return std::unexpected(child.error());
+        if (output_layout.schemas.empty())
+            output_layout = alias_layout(*child);
+        return output_layout;
+    }
+    if (node->type == PlanNodeType::Filter)
+    {
+        const auto & filter = static_cast<const popo::planner::FilterNode &>(*node);
+        Batch output_layout;
+        auto child = stream_rows(
+            filter.child, outer,
+            [&](StreamItem && item, const Batch & input_layout) -> popo::base::Result<bool>
+            {
+                output_layout.schemas = input_layout.schemas;
+                EvalEnv env{&input_layout, &item.row, outer,
+                            item.aggs.empty() ? nullptr : &item.aggs,
+                            outer ? outer->depth + 1 : 0};
+                POPO_ASSIGN_OR_RETURN(auto condition, eval(filter.condition, env));
+                if (!as_bool(condition))
+                    return true;
+                return consumer(std::move(item), output_layout);
+            });
+        if (!child)
+            return std::unexpected(child.error());
+        if (output_layout.schemas.empty())
+            output_layout.schemas = child->schemas;
+        return output_layout;
+    }
+    if (node->type == PlanNodeType::Limit)
+    {
+        const auto & limit = static_cast<const popo::planner::LimitNode &>(*node);
+        Batch output_layout;
+        int64_t skip = std::max<int64_t>(limit.offset_count, 0);
+        int64_t remaining = limit.limit_count;
+        auto child = stream_rows(
+            limit.child, outer,
+            [&](StreamItem && item, const Batch & input_layout) -> popo::base::Result<bool>
+            {
+                output_layout.schemas = input_layout.schemas;
+                if (skip > 0)
+                {
+                    --skip;
+                    return true;
+                }
+                if (remaining == 0)
+                    return false;
+                POPO_ASSIGN_OR_RETURN(bool keep_going, consumer(std::move(item), output_layout));
+                if (remaining > 0)
+                    --remaining;
+                return keep_going && remaining != 0;
+            });
+        if (!child)
+            return std::unexpected(child.error());
+        if (output_layout.schemas.empty())
+            output_layout.schemas = child->schemas;
+        return output_layout;
+    }
+    if (node->type == PlanNodeType::Project)
+    {
+        const auto & project = static_cast<const popo::planner::ProjectNode &>(*node);
+        Batch output_layout;
+        std::vector<ExprPtr> outputs;
+        std::vector<size_t> star_columns;
+        bool prepared = false;
+        auto prepare = [&](const Batch & input_layout)
+        {
+            if (prepared)
+                return;
+            ColumnSchema cs;
+            for (size_t i = 0; i < project.expressions.size(); ++i)
+            {
+                const auto & expr = project.expressions[i];
+                std::string name = i < project.output_names.size() ? project.output_names[i] : "";
+                if (expr->type == ExprType::Star)
+                {
+                    const auto & star = static_cast<const popo::parser::StarExpr &>(*expr);
+                    size_t offset = 0;
+                    for (const auto & schema : input_layout.schemas)
+                    {
+                        const bool include = star.table_name.empty()
+                            || eq_ci(star.table_name, schema.table)
+                            || (!schema.alias.empty() && eq_ci(star.table_name, schema.alias));
+                        for (const auto & column : schema.columns)
+                        {
+                            if (include)
+                            {
+                                cs.columns.push_back(column);
+                                outputs.push_back(nullptr);
+                                star_columns.push_back(offset);
+                            }
+                            ++offset;
+                        }
+                    }
+                    continue;
+                }
+                if (name.empty())
+                    name = expr->type == ExprType::FunctionCall
+                        ? agg_display_name(static_cast<const popo::parser::FunctionCallExpr &>(*expr))
+                        : std::format("column{}", cs.columns.size());
+                cs.columns.push_back(std::move(name));
+                outputs.push_back(expr);
+            }
+            output_layout.schemas.push_back(std::move(cs));
+            prepared = true;
+        };
+        auto child = stream_rows(
+            project.child, outer,
+            [&](StreamItem && item, const Batch & input_layout) -> popo::base::Result<bool>
+            {
+                prepare(input_layout);
+                EvalEnv env{&input_layout, &item.row, outer,
+                            item.aggs.empty() ? nullptr : &item.aggs,
+                            outer ? outer->depth + 1 : 0};
+                Row projected;
+                projected.reserve_values(outputs.size());
+                size_t star_index = 0;
+                for (const auto & expr : outputs)
+                {
+                    if (!expr)
+                        projected.append_value(item.row.values_[star_columns[star_index++]]);
+                    else
+                    {
+                        POPO_ASSIGN_OR_RETURN(Value value, eval(expr, env));
+                        projected.append_value(std::move(value));
+                    }
+                }
+                return consumer(StreamItem{std::move(projected), {}}, output_layout);
+            });
+        if (!child)
+            return std::unexpected(child.error());
+        prepare(*child);
+        return output_layout;
+    }
+
+    if (node->type == PlanNodeType::Join)
+    {
+        auto joined = exec_join(
+            static_cast<const popo::planner::JoinNode &>(*node), outer);
+        if (!joined)
+            return std::unexpected(joined.error());
+        Batch layout;
+        layout.schemas = joined->schemas;
+        if (joined->spilled_rows)
+        {
+            SpillReader reader(*joined->spilled_rows);
+            for (;;)
+            {
+                auto row = reader.next();
+                if (!row)
+                    return std::unexpected(row.error());
+                if (!*row)
+                    break;
+                POPO_ASSIGN_OR_RETURN(
+                    bool keep_going,
+                    consumer(StreamItem{std::move(**row), {}}, layout));
+                if (!keep_going)
+                    break;
+            }
+        }
+        else
+        {
+            for (auto & row : joined->rows)
+            {
+                POPO_ASSIGN_OR_RETURN(
+                    bool keep_going,
+                    consumer(StreamItem{std::move(row), {}}, layout));
+                if (!keep_going)
+                    break;
+            }
+        }
+        return layout;
+    }
+
+    // Blocking and uncommon operators retain their implementation but expose a
+    // pull-compatible boundary to their parent.
+    POPO_ASSIGN_OR_RETURN(Batch batch, exec_batch(node, outer));
+    Batch layout;
+    layout.schemas = batch.schemas;
+    const bool has_aggs = !batch.row_aggs.empty();
+    if (batch.spilled_rows)
+    {
+        SpillReader reader(*batch.spilled_rows);
+        for (;;)
+        {
+            auto row = reader.next();
+            if (!row)
+                return std::unexpected(row.error());
+            if (!*row)
+                break;
+            POPO_ASSIGN_OR_RETURN(
+                bool keep_going,
+                consumer(StreamItem{std::move(**row), {}}, layout));
+            if (!keep_going)
+                break;
+        }
+        return layout;
+    }
+    for (size_t i = 0; i < batch.rows.size(); ++i)
+    {
+        StreamItem item;
+        item.row = std::move(batch.rows[i]);
+        if (has_aggs)
+            item.aggs = std::move(batch.row_aggs[i]);
+        POPO_ASSIGN_OR_RETURN(bool keep_going, consumer(std::move(item), layout));
+        if (!keep_going)
+            break;
+    }
+    return layout;
 }
 
 popo::base::Result<Executor::Batch> Executor::exec_scan(const popo::planner::ScanNode & node)
@@ -1664,11 +2080,91 @@ Executor::exec_project(const popo::planner::ProjectNode & node, const EvalEnv * 
 popo::base::Result<Executor::Batch>
 Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
 {
-    POPO_ASSIGN_OR_RETURN(auto left, exec_batch(node.left, outer));
-    POPO_ASSIGN_OR_RETURN(auto right, exec_batch(node.right, outer));
+    struct JoinInput
+    {
+        Batch batch;
+        std::optional<std::filesystem::path> spill_path;
+        size_t charged = 0;
+    };
+    const bool spillable_join = node.join_type == popo::parser::JoinType::Inner
+        || node.join_type == popo::parser::JoinType::Left;
+    auto collect = [&](const popo::planner::PlanNodePtr & child) -> popo::base::Result<JoinInput>
+    {
+        JoinInput input;
+        std::unique_ptr<SpillWriter> writer;
+        auto streamed = stream_rows(
+            child, outer,
+            [&](StreamItem && item, const Batch & layout) -> popo::base::Result<bool>
+            {
+                input.batch.schemas = layout.schemas;
+                const size_t bytes = estimate_row_bytes(item.row) + 32;
+                if (!spillable_join)
+                {
+                    input.batch.rows.push_back(std::move(item.row));
+                    return true;
+                }
+                if (!writer && memory_ && memory_->try_reserve(bytes))
+                {
+                    input.charged += bytes;
+                    input.batch.rows.push_back(std::move(item.row));
+                    return true;
+                }
+                if (!writer)
+                {
+                    if (!temp_)
+                        return executor_error(
+                            "join spill context is not initialized",
+                            popo::base::Errno::InternalErr);
+                    auto path = temp_->create("join-input");
+                    if (!path)
+                        return std::unexpected(path.error());
+                    input.spill_path = *path;
+                    writer = std::make_unique<SpillWriter>(*path, temp_.get());
+                    for (const auto & row : input.batch.rows)
+                        POPO_TRY(writer->write(row));
+                    input.batch.rows.clear();
+                    if (memory_)
+                        memory_->release(input.charged);
+                    input.charged = 0;
+                }
+                POPO_TRY(writer->write(item.row));
+                return true;
+            });
+        if (!streamed)
+            return std::unexpected(streamed.error());
+        input.batch.schemas = streamed->schemas;
+        if (writer)
+            POPO_TRY(writer->close());
+        return input;
+    };
+    POPO_ASSIGN_OR_RETURN(JoinInput left_input, collect(node.left));
+    POPO_ASSIGN_OR_RETURN(JoinInput right_input, collect(node.right));
+    struct ChargeGuard
+    {
+        MemoryTracker * memory;
+        size_t left;
+        size_t right;
+        ~ChargeGuard()
+        {
+            if (memory)
+                memory->release(left + right);
+        }
+    } charge_guard{memory_.get(), left_input.charged, right_input.charged};
+    Batch & left = left_input.batch;
+    Batch & right = right_input.batch;
     Batch out;
     out.schemas = left.schemas;
     out.schemas.insert(out.schemas.end(), right.schemas.begin(), right.schemas.end());
+    if (!temp_)
+        return executor_error(
+            "join output spill context is not initialized",
+            popo::base::Errno::InternalErr);
+    auto join_output_path = temp_->create("join-output");
+    if (!join_output_path)
+        return std::unexpected(join_output_path.error());
+    out.spilled_rows = *join_output_path;
+    SpillWriter join_output(*join_output_path, temp_.get());
+    auto emit_join = [&](Row row) { return join_output.write(row); };
 
     size_t right_width = right.width();
     Row null_right;
@@ -1710,7 +2206,7 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
 
     // Extract equijoin key pairs (left_expr = right_expr) for hash join.
     std::vector<std::pair<ExprPtr, ExprPtr>> equi_keys;
-    if (node.condition && !left.rows.empty() && !right.rows.empty())
+    if (node.condition)
     {
         auto in_schemas = [](const std::vector<ColumnSchema> & schemas, const std::string & tbl, const std::string & col)
         {
@@ -1775,6 +2271,200 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
     {
         EvalEnv left_env{&left, nullptr, outer, nullptr, env.depth};
         EvalEnv right_env{&right, nullptr, outer, nullptr, env.depth};
+        size_t build_bytes = 0;
+        for (const auto & row : right.rows)
+            build_bytes += estimate_row_bytes(row) + 48;
+        const bool can_grace_spill = memory_ && temp_
+            && (node.join_type == popo::parser::JoinType::Inner
+                || node.join_type == popo::parser::JoinType::Left)
+            && (left_input.spill_path || right_input.spill_path
+                || build_bytes > std::max<size_t>(memory_->limit() / 2, 4096));
+        if (can_grace_spill)
+        {
+            auto decorate = [&](Row row, EvalEnv & key_env, bool left_side)
+                -> popo::base::Result<Row>
+            {
+                key_env.row = &row;
+                std::string key;
+                bool any_null = false;
+                for (const auto & [lexpr, rexpr] : equi_keys)
+                {
+                    POPO_ASSIGN_OR_RETURN(
+                        Value value, eval(left_side ? lexpr : rexpr, key_env));
+                    if (is_null(value))
+                    {
+                        any_null = true;
+                        break;
+                    }
+                    key += value_key(value);
+                    key.push_back('\x1f');
+                }
+                row.append_value(Value(ValueType::String, any_null ? std::string() : key));
+                return row;
+            };
+            constexpr size_t partitions = 32;
+            size_t left_pos = 0;
+            size_t right_pos = 0;
+            std::unique_ptr<SpillReader> left_source;
+            std::unique_ptr<SpillReader> right_source;
+            if (left_input.spill_path)
+                left_source = std::make_unique<SpillReader>(*left_input.spill_path);
+            if (right_input.spill_path)
+                right_source = std::make_unique<SpillReader>(*right_input.spill_path);
+            auto next_raw = [](Batch & batch, size_t & position, std::unique_ptr<SpillReader> & reader)
+                -> popo::base::Result<std::optional<Row>>
+            {
+                if (reader)
+                    return reader->next();
+                if (position == batch.rows.size())
+                    return std::optional<Row>{};
+                return std::optional<Row>(std::move(batch.rows[position++]));
+            };
+            auto hash_decorated = [](const Row & row)
+            {
+                const auto & key = row.values_.back().string_ref();
+                return std::hash<std::string>{}(key);
+            };
+            auto left_paths = partition_rows(
+                [&]() -> popo::base::Result<std::optional<Row>>
+                {
+                    auto row = next_raw(left, left_pos, left_source);
+                    if (!row)
+                        return std::unexpected(row.error());
+                    if (!*row)
+                        return std::optional<Row>{};
+                    POPO_ASSIGN_OR_RETURN(
+                        Row decorated, decorate(std::move(**row), left_env, true));
+                    return std::optional<Row>(std::move(decorated));
+                },
+                hash_decorated, partitions, *temp_, "join-left");
+            if (!left_paths)
+                return std::unexpected(left_paths.error());
+            auto right_paths = partition_rows(
+                [&]() -> popo::base::Result<std::optional<Row>>
+                {
+                    auto row = next_raw(right, right_pos, right_source);
+                    if (!row)
+                        return std::unexpected(row.error());
+                    if (!*row)
+                        return std::optional<Row>{};
+                    POPO_ASSIGN_OR_RETURN(
+                        Row decorated, decorate(std::move(**row), right_env, false));
+                    return std::optional<Row>(std::move(decorated));
+                },
+                hash_decorated, partitions, *temp_, "join-right");
+            if (!right_paths)
+                return std::unexpected(right_paths.error());
+            left.rows.clear();
+            right.rows.clear();
+            memory_->release(charge_guard.left + charge_guard.right);
+            charge_guard.left = 0;
+            charge_guard.right = 0;
+
+            for (size_t partition = 0; partition < partitions; ++partition)
+            {
+                std::vector<Row> build;
+                std::unordered_map<std::string, std::vector<size_t>> hash_table;
+                size_t charged = 0;
+                bool skewed = false;
+                SpillReader right_reader((*right_paths)[partition]);
+                for (;;)
+                {
+                    auto item = right_reader.next();
+                    if (!item)
+                        return std::unexpected(item.error());
+                    if (!*item)
+                        break;
+                    const size_t bytes = estimate_row_bytes(**item) + 48;
+                    if (!memory_->try_reserve(bytes))
+                    {
+                        skewed = true;
+                        break;
+                    }
+                    charged += bytes;
+                    build.push_back(std::move(**item));
+                }
+                if (!skewed)
+                {
+                    for (size_t i = 0; i < build.size(); ++i)
+                    {
+                        const std::string & key = build[i].values_.back().string_ref();
+                        if (!key.empty())
+                            hash_table[key].push_back(i);
+                    }
+                }
+                SpillReader left_reader((*left_paths)[partition]);
+                for (;;)
+                {
+                    auto left_item = left_reader.next();
+                    if (!left_item)
+                    {
+                        memory_->release(charged);
+                        return std::unexpected(left_item.error());
+                    }
+                    if (!*left_item)
+                        break;
+                    Row left_row = std::move(**left_item);
+                    const std::string left_key = left_row.values_.back().string_ref();
+                    left_row.values_.pop_back();
+                    bool matched = false;
+                    if (!left_key.empty() && !skewed)
+                    {
+                        auto found = hash_table.find(left_key);
+                        if (found != hash_table.end())
+                        {
+                            for (size_t index : found->second)
+                            {
+                                Row & candidate = build[index];
+                                Value saved = std::move(candidate.values_.back());
+                                candidate.values_.pop_back();
+                                POPO_ASSIGN_OR_RETURN(bool pair, matches(left_row, candidate));
+                                if (pair)
+                                {
+                                    matched = true;
+                                    POPO_TRY(emit_join(concat(left_row, candidate)));
+                                }
+                                candidate.append_value(std::move(saved));
+                            }
+                        }
+                    }
+                    else if (!left_key.empty())
+                    {
+                        // A partition that remains larger than the budget after
+                        // hashing is skewed. Block nested-loop is slow but has a
+                        // strict one-row memory footprint and guarantees progress.
+                        SpillReader fallback((*right_paths)[partition]);
+                        for (;;)
+                        {
+                            auto right_item = fallback.next();
+                            if (!right_item)
+                            {
+                                memory_->release(charged);
+                                return std::unexpected(right_item.error());
+                            }
+                            if (!*right_item)
+                                break;
+                            Row right_row = std::move(**right_item);
+                            const std::string right_key = right_row.values_.back().string_ref();
+                            right_row.values_.pop_back();
+                            if (right_key != left_key)
+                                continue;
+                            POPO_ASSIGN_OR_RETURN(bool pair, matches(left_row, right_row));
+                            if (pair)
+                            {
+                                matched = true;
+                                POPO_TRY(emit_join(concat(left_row, right_row)));
+                            }
+                        }
+                    }
+                    if (!matched && emit_unmatched_left)
+                        POPO_TRY(emit_join(concat(left_row, null_right)));
+                }
+                memory_->release(charged);
+            }
+            POPO_TRY(join_output.close());
+            return out;
+        }
         std::unordered_map<std::string, std::vector<size_t>> hash_table;
         hash_table.reserve(right.rows.size());
         for (size_t j = 0; j < right.rows.size(); ++j)
@@ -1827,14 +2517,14 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
                         {
                             matched = true;
                             right_matched[j] = true;
-                            out.rows.push_back(concat(lrow, right.rows[j]));
+                            POPO_TRY(emit_join(concat(lrow, right.rows[j])));
                         }
                     }
                 }
             }
             if (!matched && emit_unmatched_left)
             {
-                out.rows.push_back(concat(lrow, null_right));
+                POPO_TRY(emit_join(concat(lrow, null_right)));
             }
         }
         if (emit_unmatched_right)
@@ -1843,10 +2533,69 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
             {
                 if (!right_matched[j])
                 {
-                    out.rows.push_back(concat(null_left, right.rows[j]));
+                    POPO_TRY(emit_join(concat(null_left, right.rows[j])));
                 }
             }
         }
+        POPO_TRY(join_output.close());
+        return out;
+    }
+
+    if (left_input.spill_path || right_input.spill_path)
+    {
+        size_t left_position = 0;
+        std::unique_ptr<SpillReader> left_reader;
+        if (left_input.spill_path)
+            left_reader = std::make_unique<SpillReader>(*left_input.spill_path);
+        for (;;)
+        {
+            std::optional<Row> left_item;
+            if (left_reader)
+            {
+                auto item = left_reader->next();
+                if (!item)
+                    return std::unexpected(item.error());
+                left_item = std::move(*item);
+            }
+            else if (left_position < left.rows.size())
+                left_item = left.rows[left_position++];
+            if (!left_item)
+                break;
+            bool matched = false;
+            if (right_input.spill_path)
+            {
+                SpillReader right_reader(*right_input.spill_path);
+                for (;;)
+                {
+                    auto right_item = right_reader.next();
+                    if (!right_item)
+                        return std::unexpected(right_item.error());
+                    if (!*right_item)
+                        break;
+                    POPO_ASSIGN_OR_RETURN(bool pair, matches(*left_item, **right_item));
+                    if (pair)
+                    {
+                        matched = true;
+                        POPO_TRY(emit_join(concat(*left_item, **right_item)));
+                    }
+                }
+            }
+            else
+            {
+                for (const auto & right_row : right.rows)
+                {
+                    POPO_ASSIGN_OR_RETURN(bool pair, matches(*left_item, right_row));
+                    if (pair)
+                    {
+                        matched = true;
+                        POPO_TRY(emit_join(concat(*left_item, right_row)));
+                    }
+                }
+            }
+            if (!matched && emit_unmatched_left)
+                POPO_TRY(emit_join(concat(*left_item, null_right)));
+        }
+        POPO_TRY(join_output.close());
         return out;
     }
 
@@ -1860,12 +2609,12 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
             {
                 matched = true;
                 right_matched[j] = true;
-                out.rows.push_back(concat(lrow, right.rows[j]));
+                POPO_TRY(emit_join(concat(lrow, right.rows[j])));
             }
         }
         if (!matched && emit_unmatched_left)
         {
-            out.rows.push_back(concat(lrow, null_right));
+            POPO_TRY(emit_join(concat(lrow, null_right)));
         }
     }
     if (emit_unmatched_right)
@@ -1874,145 +2623,131 @@ Executor::exec_join(const popo::planner::JoinNode & node, const EvalEnv * outer)
         {
             if (!right_matched[j])
             {
-                out.rows.push_back(concat(null_left, right.rows[j]));
+                POPO_TRY(emit_join(concat(null_left, right.rows[j])));
             }
         }
     }
+    POPO_TRY(join_output.close());
     return out;
 }
 
 popo::base::Result<Executor::Batch>
 Executor::exec_agg(const popo::planner::AggNode & node, const EvalEnv * outer)
 {
-    POPO_ASSIGN_OR_RETURN(auto batch, exec_batch(node.child, outer));
+    if (!memory_ || !temp_)
+        return executor_error("aggregation spill context is not initialized", popo::base::Errno::InternalErr);
     Batch out;
-    out.schemas = batch.schemas;
-
     struct AggState
     {
         int64_t count = 0;
         Value result;
         bool initialized = false;
         std::set<std::string> distinct_seen;
+        std::string last_distinct;
+        bool has_last_distinct = false;
     };
-    struct Group
+    const size_t group_count = node.group_by.size();
+    const size_t agg_count = node.agg_exprs.size();
+    size_t row_width = 0;
+    size_t primary_distinct = agg_count;
+    for (size_t i = 0; i < agg_count; ++i)
     {
-        std::vector<AggState> states;
-        const Row * representative = nullptr;
-    };
-    std::vector<Group> groups;
-    std::unordered_map<std::string, size_t> group_index;
-
-    EvalEnv env;
-    env.layout = &batch;
-    env.outer = outer;
-    env.depth = outer ? outer->depth + 1 : 0;
-
-    for (const auto & row : batch.rows)
-    {
-        env.row = &row;
-        std::string key;
-        for (const auto & g : node.group_by)
+        const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*node.agg_exprs[i]);
+        if (func.is_distinct)
         {
-            POPO_ASSIGN_OR_RETURN(auto group_value, eval(g, env));
-            key += value_key(group_value);
-            key += '\x1f';
+            primary_distinct = i;
+            break;
         }
-        auto it = group_index.find(key);
-        if (it == group_index.end())
+    }
+    auto path = temp_->create("agg-input");
+    if (!path)
+        return std::unexpected(path.error());
+    SpillWriter spool(*path, temp_.get());
+    auto streamed = stream_rows(
+        node.child, outer,
+        [&](StreamItem && item, const Batch & layout) -> popo::base::Result<bool>
         {
-            Group group;
-            group.states.resize(node.agg_exprs.size());
-            group.representative = &row;
-            it = group_index.emplace(key, groups.size()).first;
-            groups.push_back(std::move(group));
-        }
-        auto & group = groups[it->second];
-        for (size_t i = 0; i < node.agg_exprs.size(); ++i)
-        {
-            const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*node.agg_exprs[i]);
-            auto & state = group.states[i];
-            bool is_star = func.args.empty() || func.args[0]->type == ExprType::Star;
-            Value val(ValueType::Int32, 1);
-            if (!is_star)
+            out.schemas = layout.schemas;
+            row_width = item.row.values_.size();
+            EvalEnv env{&layout, &item.row, outer,
+                        item.aggs.empty() ? nullptr : &item.aggs,
+                        outer ? outer->depth + 1 : 0};
+            Row decorated;
+            decorated.reserve_values(group_count + agg_count + row_width);
+            for (const auto & group : node.group_by)
             {
-                POPO_ASSIGN_OR_RETURN(val, eval(func.args[0], env));
+                POPO_ASSIGN_OR_RETURN(Value value, eval(group, env));
+                decorated.append_value(std::move(value));
             }
-            if (!is_star && is_null(val))
-                continue;
-            if (func.is_distinct)
+            for (const auto & expression : node.agg_exprs)
             {
-                if (!state.distinct_seen.insert(value_key(val)).second)
-                    continue;
-            }
-            switch (func.func)
-            {
-                case popo::parser::AggFuncType::Count:
-                    state.count++;
-                    break;
-                case popo::parser::AggFuncType::Sum:
-                case popo::parser::AggFuncType::Avg:
-                    if (state.initialized)
-                    {
-                        POPO_ASSIGN_OR_RETURN(state.result, do_arithmetic('+', state.result, val));
-                    }
-                    else
-                        state.result = val;
-                    state.initialized = true;
-                    state.count++;
-                    break;
-                case popo::parser::AggFuncType::Min:
-                    if (!state.initialized || sql_lt(val, state.result))
-                    {
-                        state.result = val;
-                        state.initialized = true;
-                    }
-                    break;
-                case popo::parser::AggFuncType::Max:
-                    if (!state.initialized || sql_lt(state.result, val))
-                    {
-                        state.result = val;
-                        state.initialized = true;
-                    }
-                    break;
-                case popo::parser::AggFuncType::XmlAgg: {
-                    std::string piece = val.datatype() == ValueType::String ? std::string(val.string_ref()) : val.to_val_string();
-                    if (!state.initialized)
-                    {
-                        state.result = Value(ValueType::String, piece);
-                        state.initialized = true;
-                    }
-                    else
-                    {
-                        state.result = Value(ValueType::String, state.result.string_ref() + piece);
-                    }
-                    break;
+                const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*expression);
+                const bool star = func.args.empty() || func.args[0]->type == ExprType::Star;
+                if (star)
+                    decorated.append_value(Value(ValueType::Int32, 1));
+                else
+                {
+                    POPO_ASSIGN_OR_RETURN(Value value, eval(func.args[0], env));
+                    decorated.append_value(std::move(value));
                 }
             }
+            for (auto & value : item.row.values_)
+                decorated.append_value(std::move(value));
+            POPO_TRY(spool.write(decorated));
+            return true;
+        });
+    if (!streamed)
+        return std::unexpected(streamed.error());
+    out.schemas = streamed->schemas;
+    row_width = streamed->width();
+    POPO_TRY(spool.close());
+    SpillReader input(*path);
+    auto less = [&](const Row & a, const Row & b)
+    {
+        for (size_t i = 0; i < group_count; ++i)
+        {
+            if (sql_eq(a.values_[i], b.values_[i]) || (is_null(a.values_[i]) && is_null(b.values_[i])))
+                continue;
+            if (is_null(a.values_[i]))
+                return true;
+            if (is_null(b.values_[i]))
+                return false;
+            return sql_lt(a.values_[i], b.values_[i]);
         }
-    }
+        // Sorting one DISTINCT argument inside each group makes the common
+        // COUNT(DISTINCT x) case constant-memory (TPC-H Q16).
+        if (primary_distinct < agg_count)
+        {
+            const auto & av = a.values_[group_count + primary_distinct];
+            const auto & bv = b.values_[group_count + primary_distinct];
+            if (!sql_eq(av, bv) && !(is_null(av) && is_null(bv)))
+            {
+                if (is_null(av))
+                    return true;
+                if (is_null(bv))
+                    return false;
+                return sql_lt(av, bv);
+            }
+        }
+        return false;
+    };
+    auto sorted = external_sort([&]() { return input.next(); }, less, *memory_, *temp_);
+    if (!sorted)
+        return std::unexpected(sorted.error());
 
-    if (groups.empty() && node.group_by.empty())
+    std::vector<AggState> states(agg_count);
+    Row representative;
+    std::string current_group;
+    bool have_group = false;
+    auto emit_group = [&]() -> popo::base::Result<void>
     {
-        Group group;
-        group.states.resize(node.agg_exprs.size());
-        groups.push_back(std::move(group));
-    }
-
-    Row null_row;
-    null_row.reserve_values(batch.width());
-    for (size_t i = 0; i < batch.width(); ++i)
-    {
-        null_row.append_value(Value());
-    }
-
-    for (auto & group : groups)
-    {
+        if (!have_group)
+            return {};
         std::unordered_map<const Expr *, Value> agg_values;
-        for (size_t i = 0; i < node.agg_exprs.size(); ++i)
+        for (size_t i = 0; i < agg_count; ++i)
         {
             const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*node.agg_exprs[i]);
-            const auto & state = group.states[i];
+            const auto & state = states[i];
             Value value;
             switch (func.func)
             {
@@ -2029,8 +2764,99 @@ Executor::exec_agg(const popo::planner::AggNode & node, const EvalEnv * outer)
             }
             agg_values.emplace(node.agg_exprs[i].get(), value);
         }
-        out.rows.push_back(group.representative ? *group.representative : null_row);
+        out.rows.push_back(representative);
         out.row_aggs.push_back(std::move(agg_values));
+        return {};
+    };
+    for (auto & decorated : *sorted)
+    {
+        std::string group_key;
+        for (size_t i = 0; i < group_count; ++i)
+        {
+            group_key += value_key(decorated.values_[i]);
+            group_key.push_back('\x1f');
+        }
+        if (!have_group || group_key != current_group)
+        {
+            POPO_TRY(emit_group());
+            current_group = std::move(group_key);
+            have_group = true;
+            states.assign(agg_count, AggState{});
+            representative = Row{};
+            representative.reserve_values(row_width);
+            for (size_t i = 0; i < row_width; ++i)
+                representative.append_value(decorated.values_[group_count + agg_count + i]);
+        }
+        for (size_t i = 0; i < agg_count; ++i)
+        {
+            const auto & func = static_cast<const popo::parser::FunctionCallExpr &>(*node.agg_exprs[i]);
+            auto & state = states[i];
+            const Value & val = decorated.values_[group_count + i];
+            const bool star = func.args.empty() || func.args[0]->type == ExprType::Star;
+            if (!star && is_null(val))
+                continue;
+            if (func.is_distinct)
+            {
+                const std::string key = value_key(val);
+                if (i == primary_distinct)
+                {
+                    if (state.has_last_distinct && state.last_distinct == key)
+                        continue;
+                    state.last_distinct = key;
+                    state.has_last_distinct = true;
+                }
+                else if (!state.distinct_seen.insert(key).second)
+                    continue;
+            }
+            switch (func.func)
+            {
+                case popo::parser::AggFuncType::Count: ++state.count; break;
+                case popo::parser::AggFuncType::Sum:
+                case popo::parser::AggFuncType::Avg:
+                    if (state.initialized)
+                    {
+                        POPO_ASSIGN_OR_RETURN(state.result, do_arithmetic('+', state.result, val));
+                    }
+                    else
+                        state.result = val;
+                    state.initialized = true;
+                    ++state.count;
+                    break;
+                case popo::parser::AggFuncType::Min:
+                    if (!state.initialized || sql_lt(val, state.result))
+                    {
+                        state.result = val;
+                        state.initialized = true;
+                    }
+                    break;
+                case popo::parser::AggFuncType::Max:
+                    if (!state.initialized || sql_lt(state.result, val))
+                    {
+                        state.result = val;
+                        state.initialized = true;
+                    }
+                    break;
+                case popo::parser::AggFuncType::XmlAgg: {
+                    const std::string piece = val.datatype() == ValueType::String
+                        ? std::string(val.string_ref()) : val.to_val_string();
+                    state.result = Value(
+                        ValueType::String,
+                        state.initialized ? state.result.string_ref() + piece : piece);
+                    state.initialized = true;
+                    break;
+                }
+            }
+        }
+    }
+    POPO_TRY(emit_group());
+    if (!have_group && group_count == 0)
+    {
+        have_group = true;
+        representative = Row{};
+        representative.reserve_values(row_width);
+        for (size_t i = 0; i < row_width; ++i)
+            representative.append_value(Value());
+        POPO_TRY(emit_group());
     }
     return out;
 }
@@ -2038,35 +2864,57 @@ Executor::exec_agg(const popo::planner::AggNode & node, const EvalEnv * outer)
 popo::base::Result<Executor::Batch>
 Executor::exec_sort(const popo::planner::SortNode & node, const EvalEnv * outer)
 {
-    POPO_ASSIGN_OR_RETURN(auto batch, exec_batch(node.child, outer));
-    bool has_aggs = !batch.row_aggs.empty();
-    EvalEnv env;
-    env.layout = &batch;
-    env.outer = outer;
-    env.depth = outer ? outer->depth + 1 : 0;
+    if (!memory_ || !temp_)
+        return executor_error("sort spill context is not initialized", popo::base::Errno::InternalErr);
 
-    std::vector<std::vector<Value>> keys(batch.rows.size());
-    for (size_t i = 0; i < batch.rows.size(); ++i)
-    {
-        env.row = &batch.rows[i];
-        env.aggs = has_aggs ? &batch.row_aggs[i] : nullptr;
-        for (const auto & item : node.order_by)
+    auto spool_path = temp_->create("sort-input");
+    if (!spool_path)
+        return std::unexpected(spool_path.error());
+    SpillWriter spool(*spool_path, temp_.get());
+    Batch input_layout;
+    std::vector<const Expr *> aggregate_exprs;
+    const size_t key_count = node.order_by.size();
+    auto streamed = stream_rows(
+        node.child, outer,
+        [&](StreamItem && item, const Batch & layout) -> popo::base::Result<bool>
         {
-            POPO_ASSIGN_OR_RETURN(auto key, eval(item.expr, env));
-            keys[i].push_back(std::move(key));
-        }
-    }
-    std::vector<size_t> order(batch.rows.size());
-    for (size_t i = 0; i < order.size(); ++i)
+            input_layout.schemas = layout.schemas;
+            if (aggregate_exprs.empty() && !item.aggs.empty())
+                for (const auto & [expr, _] : item.aggs)
+                    aggregate_exprs.push_back(expr);
+            EvalEnv env{&layout, &item.row, outer,
+                        item.aggs.empty() ? nullptr : &item.aggs,
+                        outer ? outer->depth + 1 : 0};
+            Row decorated;
+            decorated.reserve_values(key_count + aggregate_exprs.size() + item.row.values_.size());
+            for (const auto & order : node.order_by)
+            {
+                POPO_ASSIGN_OR_RETURN(Value key, eval(order.expr, env));
+                decorated.append_value(std::move(key));
+            }
+            for (const Expr * expr : aggregate_exprs)
+            {
+                auto it = item.aggs.find(expr);
+                decorated.append_value(it == item.aggs.end() ? Value() : it->second);
+            }
+            for (auto & value : item.row.values_)
+                decorated.append_value(std::move(value));
+            POPO_TRY(spool.write(decorated));
+            return true;
+        });
+    if (!streamed)
+        return std::unexpected(streamed.error());
+    input_layout.schemas = streamed->schemas;
+    POPO_TRY(spool.close());
+
+    SpillReader input(*spool_path);
+    auto less = [&](const Row & a, const Row & b)
     {
-        order[i] = i;
-    }
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
-        for (size_t k = 0; k < node.order_by.size(); ++k)
+        for (size_t k = 0; k < key_count; ++k)
         {
-            const auto & av = keys[a][k];
-            const auto & bv = keys[b][k];
-            bool asc = node.order_by[k].ascending;
+            const auto & av = a.values_[k];
+            const auto & bv = b.values_[k];
+            const bool asc = node.order_by[k].ascending;
             if (is_null(av) || is_null(bv))
             {
                 if (is_null(av) && is_null(bv))
@@ -2078,15 +2926,28 @@ Executor::exec_sort(const popo::planner::SortNode & node, const EvalEnv * outer)
             return asc ? sql_lt(av, bv) : sql_lt(bv, av);
         }
         return false;
-    });
+    };
+    auto sorted = external_sort(
+        [&]() { return input.next(); }, less, *memory_, *temp_);
+    if (!sorted)
+        return std::unexpected(sorted.error());
+
     Batch out;
-    out.schemas = batch.schemas;
-    for (size_t idx : order)
+    out.schemas = input_layout.schemas;
+    const size_t prefix = key_count + aggregate_exprs.size();
+    for (auto & decorated : *sorted)
     {
-        out.rows.push_back(std::move(batch.rows[idx]));
-        if (has_aggs)
+        Row row;
+        row.reserve_values(decorated.values_.size() - prefix);
+        for (size_t i = prefix; i < decorated.values_.size(); ++i)
+            row.append_value(std::move(decorated.values_[i]));
+        out.rows.push_back(std::move(row));
+        if (!aggregate_exprs.empty())
         {
-            out.row_aggs.push_back(std::move(batch.row_aggs[idx]));
+            std::unordered_map<const Expr *, Value> aggs;
+            for (size_t i = 0; i < aggregate_exprs.size(); ++i)
+                aggs.emplace(aggregate_exprs[i], std::move(decorated.values_[key_count + i]));
+            out.row_aggs.push_back(std::move(aggs));
         }
     }
     return out;
@@ -2115,20 +2976,74 @@ Executor::exec_limit(const popo::planner::LimitNode & node, const EvalEnv * oute
 popo::base::Result<Executor::Batch>
 Executor::exec_distinct(const popo::planner::DistinctNode & node, const EvalEnv * outer)
 {
-    POPO_ASSIGN_OR_RETURN(auto batch, exec_batch(node.child, outer));
+    if (!memory_ || !temp_)
+        return executor_error("distinct spill context is not initialized", popo::base::Errno::InternalErr);
     Batch out;
-    out.schemas = batch.schemas;
-    bool has_aggs = !batch.row_aggs.empty();
-    std::set<std::string> seen;
-    for (size_t i = 0; i < batch.rows.size(); ++i)
-    {
-        if (seen.insert(row_key(batch.rows[i])).second)
+    std::vector<const Expr *> aggregate_exprs;
+    size_t row_width = 0;
+    auto path = temp_->create("distinct-input");
+    if (!path)
+        return std::unexpected(path.error());
+    SpillWriter spool(*path, temp_.get());
+    auto streamed = stream_rows(
+        node.child, outer,
+        [&](StreamItem && item, const Batch & layout) -> popo::base::Result<bool>
         {
-            out.rows.push_back(std::move(batch.rows[i]));
-            if (has_aggs)
+            out.schemas = layout.schemas;
+            row_width = item.row.values_.size();
+            if (aggregate_exprs.empty() && !item.aggs.empty())
+                for (const auto & [expr, _] : item.aggs)
+                    aggregate_exprs.push_back(expr);
+            for (const Expr * expr : aggregate_exprs)
             {
-                out.row_aggs.push_back(std::move(batch.row_aggs[i]));
+                auto it = item.aggs.find(expr);
+                item.row.append_value(it == item.aggs.end() ? Value() : it->second);
             }
+            POPO_TRY(spool.write(item.row));
+            return true;
+        });
+    if (!streamed)
+        return std::unexpected(streamed.error());
+    out.schemas = streamed->schemas;
+    POPO_TRY(spool.close());
+    SpillReader input(*path);
+    auto less = [&](const Row & a, const Row & b)
+    {
+        for (size_t i = 0; i < row_width; ++i)
+        {
+            if (sql_eq(a.values_[i], b.values_[i]) || (is_null(a.values_[i]) && is_null(b.values_[i])))
+                continue;
+            if (is_null(a.values_[i]))
+                return true;
+            if (is_null(b.values_[i]))
+                return false;
+            return sql_lt(a.values_[i], b.values_[i]);
+        }
+        return false;
+    };
+    auto sorted = external_sort([&]() { return input.next(); }, less, *memory_, *temp_);
+    if (!sorted)
+        return std::unexpected(sorted.error());
+    std::string previous;
+    bool have_previous = false;
+    for (auto & decorated : *sorted)
+    {
+        Row row;
+        row.reserve_values(row_width);
+        for (size_t i = 0; i < row_width; ++i)
+            row.append_value(std::move(decorated.values_[i]));
+        std::string key = row_key(row);
+        if (have_previous && key == previous)
+            continue;
+        previous = std::move(key);
+        have_previous = true;
+        out.rows.push_back(std::move(row));
+        if (!aggregate_exprs.empty())
+        {
+            std::unordered_map<const Expr *, Value> aggs;
+            for (size_t i = 0; i < aggregate_exprs.size(); ++i)
+                aggs.emplace(aggregate_exprs[i], std::move(decorated.values_[row_width + i]));
+            out.row_aggs.push_back(std::move(aggs));
         }
     }
     return out;
@@ -2478,6 +3393,21 @@ Executor::resolve_column(const std::string & table, const std::string & column, 
                             size_t idx = offset + i;
                             if (idx < scope->row->values_.size())
                             {
+                                if (correlation_capture_ && scope->depth <= correlation_capture_max_depth_)
+                                {
+                                    bool captured = false;
+                                    for (const auto & [seen_table, seen_column, _] : *correlation_capture_)
+                                    {
+                                        if (seen_table == table && seen_column == column)
+                                        {
+                                            captured = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!captured)
+                                        correlation_capture_->emplace_back(
+                                            table, column, scope->row->values_[idx]);
+                                }
                                 return scope->row->values_[idx];
                             }
                             return Value();
@@ -2516,10 +3446,42 @@ popo::base::Result<Executor::CachedSubquery *> Executor::eval_subquery_cached(
     {
         return &hit->second;
     }
+    auto correlated_hit = correlated_subqueries_.find(&expr);
+    if (correlated_hit != correlated_subqueries_.end()
+        && !correlated_hit->second.outer_columns.empty())
+    {
+        std::string key;
+        for (const auto & [table, column] : correlated_hit->second.outer_columns)
+        {
+            POPO_ASSIGN_OR_RETURN(Value value, resolve_column(table, column, env));
+            key += value_key(value);
+            key.push_back('\x1f');
+        }
+        auto entry = correlated_hit->second.entries.find(key);
+        if (entry != correlated_hit->second.entries.end())
+            return &entry->second;
+    }
     int saved = min_env_depth_seen_;
     min_env_depth_seen_ = std::numeric_limits<int>::max();
-    POPO_ASSIGN_OR_RETURN(auto plan, subquery_plan(expr, query));
-    POPO_ASSIGN_OR_RETURN(scratch, exec_batch(plan, &env));
+    std::vector<std::tuple<std::string, std::string, Value>> captured;
+    auto * saved_capture = correlation_capture_;
+    int saved_capture_depth = correlation_capture_max_depth_;
+    correlation_capture_ = &captured;
+    correlation_capture_max_depth_ = env.depth;
+    auto planned = subquery_plan(expr, query);
+    if (!planned)
+    {
+        correlation_capture_ = saved_capture;
+        correlation_capture_max_depth_ = saved_capture_depth;
+        return std::unexpected(planned.error());
+    }
+    auto plan = std::move(*planned);
+    auto executed = exec_batch(plan, &env);
+    correlation_capture_ = saved_capture;
+    correlation_capture_max_depth_ = saved_capture_depth;
+    if (!executed)
+        return std::unexpected(executed.error());
+    scratch = std::move(*executed);
     bool correlated = min_env_depth_seen_ <= env.depth;
     min_env_depth_seen_ = std::min(saved, min_env_depth_seen_);
     if (!correlated)
@@ -2528,6 +3490,48 @@ popo::base::Result<Executor::CachedSubquery *> Executor::eval_subquery_cached(
         entry.batch = std::move(scratch);
         auto [it, _] = uncorrelated_subqueries_.emplace(&expr, std::move(entry));
         return &it->second;
+    }
+    if (correlated && !captured.empty())
+    {
+        auto & cache = correlated_subqueries_[&expr];
+        if (cache.outer_columns.empty())
+        {
+            std::set<std::pair<std::string, std::string>> seen;
+            for (const auto & [table, column, _] : captured)
+                if (seen.emplace(table, column).second)
+                    cache.outer_columns.emplace_back(table, column);
+        }
+        std::string key;
+        for (const auto & [table, column] : cache.outer_columns)
+        {
+            bool found = false;
+            for (const auto & [captured_table, captured_column, value] : captured)
+            {
+                if (captured_table == table && captured_column == column)
+                {
+                    key += value_key(value);
+                    key.push_back('\x1f');
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                POPO_ASSIGN_OR_RETURN(Value value, resolve_column(table, column, env));
+                key += value_key(value);
+                key.push_back('\x1f');
+            }
+        }
+        size_t bytes = sizeof(CachedSubquery);
+        for (const auto & row : scratch.rows)
+            bytes += estimate_row_bytes(row);
+        if ((!memory_ || memory_->try_reserve(bytes)) && cache.entries.size() < 100000)
+        {
+            CachedSubquery entry;
+            entry.batch = std::move(scratch);
+            auto [it, _] = cache.entries.emplace(std::move(key), std::move(entry));
+            return &it->second;
+        }
     }
     return nullptr;
 }

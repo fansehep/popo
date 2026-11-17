@@ -10,6 +10,7 @@
 #include "catalog/schema_mgr.h"
 #include "src/storage/storage_engine.h"
 #include "src/storage/table_heap.h"
+#include "src/trancation/mvcc.h"
 #include "src/trancation/txn.h"
 #include "type/tuple.h"
 #include "type/value.h"
@@ -53,11 +54,12 @@ private:
     struct Cursor
     {
         std::string table_name;
-        // Schema and secondary-index access only; rows come from the version store.
+        // Schema and secondary-index access only; scan rows stream from MVCC.
         popo::storage::TableHeap * heap = nullptr;
         int32_t pk_col = -1;
-        // Rows visible to this statement's snapshot, in PK order. Materialized once
-        // per scan so buffered writes cannot make the statement see its own output.
+        std::unique_ptr<popo::txn::MvccManager::Cursor> stream;
+        // Point/index seeks use this as their small result buffer. Streaming scans
+        // keep exactly their current row here so existing opcodes share one path.
         std::vector<popo::type::Row> rows;
         size_t pos = 0;
         bool has_current = false;

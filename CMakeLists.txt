@@ -61,6 +61,7 @@ find_package(Threads REQUIRED)
 target_link_libraries(asio_lib INTERFACE Threads::Threads)
 
 add_subdirectory(src)
+add_subdirectory(bench/tpch)
 add_subdirectory(tests)
 
 add_custom_target(

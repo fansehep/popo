@@ -1,6 +1,23 @@
-build
-build2
-.cache
-.idea
-.vscode
-.qoder
+# Build & IDE
+/build*
+.cache/
+.idea/
+.vscode/
+.qoder/
+compile_commands.json
+
+# Runtime & benchmark data
+/data/
+/test_data/
+/benchmark-artifacts/
+/bench_result.txt
+/tests/benchmark/bench
+/tests/benchmark/data/
+/tests/benchmark/test_data/
+/tests/benchmark/.gotmp/
+
+# Profiling & core dumps
+perf.data*
+perf_*.data*
+core
+core.*

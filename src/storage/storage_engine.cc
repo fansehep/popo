@@ -263,47 +263,52 @@ void StorageEngine::abort_txn(popo::txn::Transaction * txn)
 
 void StorageEngine::checkpoint()
 {
-    std::vector<LogRecord> snapshot;
+    std::lock_guard<std::mutex> lock(mutex_);
+    redo_log_->truncate();
+
+    LogRecord begin;
+    begin.type = LogType::BEGIN;
+    begin.txn_id = 0;
+    redo_log_->append(begin);
+    for (const auto & [name, schema] : catalog_)
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        LogRecord begin;
-        begin.type = LogType::BEGIN;
-        begin.txn_id = 0;
-        snapshot.push_back(begin);
-        for (const auto & [name, schema] : catalog_)
+        auto hit = table_heaps_.find(name);
+        if (hit == table_heaps_.end() || !hit->second)
         {
-            auto hit = table_heaps_.find(name);
-            if (hit == table_heaps_.end() || !hit->second)
+            continue;
+        }
+        LogRecord ct;
+        ct.type = LogType::CREATE_TABLE;
+        ct.table_name = name;
+        ct.txn_id = 0;
+        ct.new_data = popo::catalog::serialize_schema(schema);
+        redo_log_->append(ct);
+
+        auto * heap = hit->second.get();
+        auto iter = heap->iter();
+        size_t rows_since_flush = 0;
+        for (; iter.valid(); iter.next())
+        {
+            LogRecord ins;
+            ins.type = LogType::INSERT;
+            ins.table_name = name;
+            ins.txn_id = 0;
+            ins.new_data = RowSerializer::serialize(iter.current_row(), heap->schema());
+            redo_log_->append(ins);
+            // RedoLogManager buffers appended bytes. Drain in chunks so a
+            // checkpoint does not become another full-table memory image.
+            if (++rows_since_flush == 4096)
             {
-                continue;
-            }
-            LogRecord ct;
-            ct.type = LogType::CREATE_TABLE;
-            ct.table_name = name;
-            ct.txn_id = 0;
-            ct.new_data = popo::catalog::serialize_schema(schema);
-            snapshot.push_back(std::move(ct));
-            auto * heap = hit->second.get();
-            for (const auto & row : mvcc_->current_rows(name))
-            {
-                LogRecord ins;
-                ins.type = LogType::INSERT;
-                ins.table_name = name;
-                ins.txn_id = 0;
-                ins.new_data = RowSerializer::serialize(row, heap->schema());
-                snapshot.push_back(std::move(ins));
+                redo_log_->flush();
+                rows_since_flush = 0;
             }
         }
-        LogRecord commit;
-        commit.type = LogType::COMMIT;
-        commit.txn_id = 0;
-        snapshot.push_back(commit);
     }
-    redo_log_->truncate();
-    for (const auto & rec : snapshot)
-    {
-        redo_log_->append(rec);
-    }
+
+    LogRecord commit;
+    commit.type = LogType::COMMIT;
+    commit.txn_id = 0;
+    redo_log_->append(commit);
     redo_log_->flush();
 }
 

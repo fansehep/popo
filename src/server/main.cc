@@ -85,6 +85,7 @@ int main(int argc, char * argv[])
         spdlog::error("{}", initialized.error().error_message);
         return 1;
     }
+    schema_mgr.restore(engine.catalog());
 
     popo::server::AuthConfig auth;
     auth.password = config.root_password;

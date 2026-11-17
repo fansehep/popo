@@ -78,6 +78,11 @@ public:
     popo::parser::StmtPtr find_view(const std::string & name);
     std::vector<std::string> find_view_columns(const std::string & name);
 
+    // Recovery rebuilds the storage engine's catalog from the redo log, but this
+    // map lives only in memory: without repopulating it every table looks missing
+    // after a restart.
+    void restore(const std::unordered_map<std::string, Schema> & tables);
+
     std::vector<std::string> all_table_names() const
     {
         std::vector<std::string> names;

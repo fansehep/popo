@@ -173,4 +173,97 @@ TEST_F(RecoveryTest, FlushingMidTransactionDoesNotLeakUncommittedRows)
     EXPECT_EQ(rows[0].values_[0].to_f64(), 1.0);
 }
 
+TEST_F(RecoveryTest, StreamingCursorMergesHeapAndOwnOverlayWithoutMirroringBaseline)
+{
+    StorageEngine engine(dir_.string(), 16);
+    ASSERT_TRUE(engine.init());
+    ASSERT_TRUE(engine.create_table("t", make_schema("t")));
+
+    auto * seed = engine.begin_txn();
+    for (int32_t i = 1; i <= 500; ++i)
+    {
+        ASSERT_TRUE(engine.mvcc()->stage_insert(seed, "t", make_row(i, i * 10)));
+    }
+    ASSERT_TRUE(engine.commit_txn(seed));
+    EXPECT_EQ(engine.mvcc()->retained_version_count(), 0u);
+
+    auto * reader = engine.begin_txn(popo::txn::IsolationLevel::RepeatableRead);
+    ASSERT_TRUE(engine.mvcc()->stage_delete(reader, "t", Value(ValueType::Int32, 250)));
+    ASSERT_TRUE(engine.mvcc()->stage_insert(reader, "t", make_row(1000, 10000)));
+
+    auto cursor = engine.mvcc()->scan_cursor(reader, "t");
+    Row row;
+    int64_t count = 0;
+    int32_t previous = 0;
+    bool saw_deleted = false;
+    while (cursor.next(row))
+    {
+        int32_t id = static_cast<int32_t>(row.values_[0].to_f64());
+        EXPECT_GT(id, previous);
+        previous = id;
+        saw_deleted = saw_deleted || id == 250;
+        ++count;
+    }
+    EXPECT_EQ(count, 500);
+    EXPECT_FALSE(saw_deleted);
+    EXPECT_EQ(previous, 1000);
+    engine.abort_txn(reader);
+}
+
+TEST_F(RecoveryTest, ConcurrentUpdateDeleteHistoryIsPrunedAfterOldestSnapshot)
+{
+    StorageEngine engine(dir_.string(), 16);
+    ASSERT_TRUE(engine.init());
+    ASSERT_TRUE(engine.create_table("t", make_schema("t")));
+
+    auto * seed = engine.begin_txn();
+    ASSERT_TRUE(engine.mvcc()->stage_insert(seed, "t", make_row(1, 10)));
+    ASSERT_TRUE(engine.mvcc()->stage_insert(seed, "t", make_row(2, 20)));
+    ASSERT_TRUE(engine.commit_txn(seed));
+
+    auto * snapshot = engine.begin_txn(popo::txn::IsolationLevel::RepeatableRead);
+    auto * writer = engine.begin_txn();
+    ASSERT_TRUE(engine.mvcc()->stage_update(writer, "t", Value(ValueType::Int32, 1), make_row(1, 99)));
+    ASSERT_TRUE(engine.mvcc()->stage_delete(writer, "t", Value(ValueType::Int32, 2)));
+    ASSERT_TRUE(engine.commit_txn(writer));
+
+    auto old_one = engine.mvcc()->lookup(snapshot, "t", Value(ValueType::Int32, 1));
+    auto old_two = engine.mvcc()->lookup(snapshot, "t", Value(ValueType::Int32, 2));
+    ASSERT_TRUE(old_one);
+    ASSERT_TRUE(old_two);
+    EXPECT_EQ(old_one->values_[1].to_f64(), 10.0);
+    EXPECT_EQ(old_two->values_[1].to_f64(), 20.0);
+    EXPECT_GE(engine.mvcc()->retained_version_count(), 4u);
+
+    engine.abort_txn(snapshot);
+    engine.mvcc()->garbage_collect();
+    EXPECT_EQ(engine.mvcc()->retained_version_count(), 0u);
+    auto * latest = engine.begin_txn();
+    EXPECT_EQ(engine.mvcc()->count(latest, "t"), 1);
+    ASSERT_TRUE(engine.commit_txn(latest));
+}
+
+TEST_F(RecoveryTest, StreamedCheckpointRecoversAllRowsWithoutVersionMirror)
+{
+    {
+        StorageEngine engine(dir_.string(), 16);
+        ASSERT_TRUE(engine.init());
+        ASSERT_TRUE(engine.create_table("t", make_schema("t")));
+        auto * txn = engine.begin_txn();
+        for (int32_t i = 1; i <= 300; ++i)
+        {
+            ASSERT_TRUE(engine.mvcc()->stage_insert(txn, "t", make_row(i, i * 3)));
+        }
+        ASSERT_TRUE(engine.commit_txn(txn));
+        engine.checkpoint();
+    }
+
+    StorageEngine recovered(dir_.string(), 16);
+    ASSERT_TRUE(recovered.init());
+    EXPECT_EQ(recovered.mvcc()->retained_version_count(), 0u);
+    auto * reader = recovered.begin_txn();
+    EXPECT_EQ(recovered.mvcc()->count(reader, "t"), 300);
+    ASSERT_TRUE(recovered.commit_txn(reader));
+}
+
 } // namespace

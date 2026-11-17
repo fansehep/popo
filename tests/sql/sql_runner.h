@@ -22,6 +22,7 @@ namespace popo::test
 struct SqlSuccess
 {
     popo::bytecode::ExecuteSuccess result;
+    popo::executor::Executor::SpillStats spill;
     int64_t parse_us = 0;
     int64_t plan_us = 0;
     int64_t compile_us = 0;
@@ -57,17 +58,25 @@ private:
 class SqlRunner
 {
 public:
-    explicit SqlRunner(const std::string & data_dir, size_t buffer_pages = 4096)
+    explicit SqlRunner(
+        const std::string & data_dir,
+        size_t buffer_pages = 4096,
+        std::optional<popo::executor::Executor::Options> executor_options = std::nullopt)
         : engine_(data_dir, buffer_pages)
         , session_(engine_)
         , planner_(schema_)
         , compiler_(schema_)
         , vm_(schema_, engine_)
+        , executor_options_(std::move(executor_options))
     {
         auto initialized = engine_.init();
         if (!initialized)
         {
             init_error_ = initialized.error();
+        }
+        else
+        {
+            schema_.restore(engine_.catalog());
         }
         vm_.set_session(&session_);
     }
@@ -96,6 +105,7 @@ public:
     popo::bytecode::TxnSession & session() { return session_; }
     popo::storage::StorageEngine & engine() { return engine_; }
     popo::catalog::SchemaManager & schema() { return schema_; }
+    void set_executor_options(popo::executor::Executor::Options options) { executor_options_ = std::move(options); }
 
 private:
     friend class SqlTxn;
@@ -160,14 +170,19 @@ private:
 
             if (popo::executor::needs_generic_executor(stmt) || popo::executor::plan_needs_generic_executor(*plan))
             {
-                popo::executor::Executor executor(schema_, engine_);
-                auto executed = executor.execute(*plan, use_txn);
+                std::unique_ptr<popo::executor::Executor> executor;
+                if (executor_options_)
+                    executor = std::make_unique<popo::executor::Executor>(schema_, engine_, *executor_options_);
+                else
+                    executor = std::make_unique<popo::executor::Executor>(schema_, engine_);
+                auto executed = executor->execute(*plan, use_txn);
                 auto tv1 = clock::now();
                 out.vm_us += us(tv1 - tp1);
                 if (!executed)
                 {
                     return fail(executed.error());
                 }
+                out.spill = executor->spill_stats();
                 out.result = std::move(*executed);
                 if (own_session)
                 {
@@ -220,10 +235,13 @@ private:
     popo::planner::Planner planner_;
     popo::bytecode::Compiler compiler_;
     popo::bytecode::VirtualMachine vm_;
+    std::optional<popo::executor::Executor::Options> executor_options_;
     std::optional<popo::base::Error> init_error_;
 };
 
-inline SqlTxn::SqlTxn(SqlRunner * runner) : runner_(runner) {}
+inline SqlTxn::SqlTxn(SqlRunner * runner) : runner_(runner)
+{
+}
 
 inline SqlTxn::~SqlTxn()
 {

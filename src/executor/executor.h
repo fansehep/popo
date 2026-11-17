@@ -1,12 +1,16 @@
 #pragma once
 
 #include <limits>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include "base/error.h"
+#include "executor/spill.h"
 #include "bytecode/vm.h"
 #include "catalog/schema_mgr.h"
 #include "parser/ast.h"
@@ -31,7 +35,24 @@ bool plan_needs_generic_executor(const popo::planner::PlanNodePtr & plan);
 class Executor
 {
 public:
+    struct Options
+    {
+        size_t memory_limit_bytes = 4ULL * 1024 * 1024 * 1024;
+        std::filesystem::path temp_directory;
+    };
+
+    struct SpillStats
+    {
+        size_t peak_memory_bytes = 0;
+        size_t files_created = 0;
+        uint64_t bytes_written = 0;
+    };
+
     Executor(popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine);
+    Executor(
+        popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine,
+        Options options);
+    const SpillStats & spill_stats() const noexcept { return spill_stats_; }
 
     // outer_txn == nullptr: this call begins and commits one transaction.
     popo::base::Result<popo::bytecode::ExecuteSuccess>
@@ -49,6 +70,7 @@ private:
     {
         std::vector<ColumnSchema> schemas;
         std::vector<popo::type::Row> rows;
+        std::optional<std::filesystem::path> spilled_rows;
         // Per-row aggregate results (aligned with rows) when produced by an Agg node,
         // so HAVING / Project / Sort above can reference aggregate expressions.
         std::vector<std::unordered_map<const popo::parser::Expr *, popo::type::Value>> row_aggs;
@@ -65,6 +87,12 @@ private:
         bool indexed = false;
     };
 
+    struct CorrelatedSubqueryCache
+    {
+        std::vector<std::pair<std::string, std::string>> outer_columns;
+        std::unordered_map<std::string, CachedSubquery> entries;
+    };
+
     struct EvalEnv
     {
         const Batch * layout = nullptr;
@@ -74,6 +102,15 @@ private:
         int depth = 0;
     };
 
+    struct StreamItem
+    {
+        popo::type::Row row;
+        std::unordered_map<const popo::parser::Expr *, popo::type::Value> aggs;
+    };
+
+    using StreamConsumer =
+        std::function<popo::base::Result<bool>(StreamItem &&, const Batch &)>;
+
     popo::catalog::SchemaManager & schema_mgr_;
     popo::storage::StorageEngine & engine_;
     popo::planner::Planner planner_;
@@ -82,15 +119,33 @@ private:
     popo::bytecode::ExecuteSuccess result_;
     std::unordered_map<const popo::parser::Expr *, popo::planner::PlanNodePtr> subquery_plans_;
     std::unordered_map<const popo::parser::Expr *, CachedSubquery> uncorrelated_subqueries_;
+    std::unordered_map<const popo::parser::Expr *, CorrelatedSubqueryCache> correlated_subqueries_;
     std::unordered_map<const popo::planner::PlanNode *, Batch> materialized_;
+    struct StreamMaterialized
+    {
+        Batch layout;
+        std::filesystem::path path;
+    };
+    std::unordered_map<const popo::planner::PlanNode *, StreamMaterialized> stream_materialized_;
     std::unordered_map<std::string, Batch> recursive_inputs_;
     mutable int min_env_depth_seen_ = std::numeric_limits<int>::max();
+    mutable std::vector<std::tuple<std::string, std::string, popo::type::Value>> * correlation_capture_ = nullptr;
+    mutable int correlation_capture_max_depth_ = -1;
+    Options options_;
+    SpillStats spill_stats_;
+    std::unique_ptr<MemoryTracker> memory_;
+    std::unique_ptr<TempFileManager> temp_;
 
     popo::planner::PlanNodePtr optimize_plan(const popo::planner::PlanNodePtr & node, bool preserve_star_order = false) const;
     popo::planner::PlanNodePtr optimize_join_group(const popo::planner::PlanNodePtr & node, bool preserve_star_order) const;
     static bool collect_schemas(const popo::planner::PlanNodePtr & node, std::vector<ColumnSchema> & out);
 
     popo::base::Result<Batch> exec_batch(const popo::planner::PlanNodePtr & node, const EvalEnv * outer);
+    // Pull-compatible producer: the bool returned by the consumer controls
+    // early termination (used by LIMIT and EXISTS).
+    popo::base::Result<Batch> stream_rows(
+        const popo::planner::PlanNodePtr & node, const EvalEnv * outer,
+        const StreamConsumer & consumer);
     popo::base::Result<Batch> exec_scan(const popo::planner::ScanNode & node);
     popo::base::Result<Batch> exec_subquery_scan(const popo::planner::SubqueryScanNode & node, const EvalEnv * outer);
     popo::base::Result<Batch> exec_filter(const popo::planner::FilterNode & node, const EvalEnv * outer);

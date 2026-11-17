@@ -191,7 +191,13 @@ bool BufferPoolManager::flush_page(const std::string & table_name, page_id_t pag
 
 popo::base::Result<void> BufferPoolManager::flush_all()
 {
+    // no-steal lets the whole pool go dirty between flushes, and a single WAL
+    // commit record is size-capped, so publish in bounded batches. Page images
+    // are only a cache — recovery replays logical redo — so a partially
+    // completed flush is safe to leave for the next one.
+    constexpr size_t kBatchPages = 4096;
     bool own_txn = disk_manager_->begin_txn();
+    size_t staged = 0;
     {
         std::lock_guard lock(latch_);
 
@@ -216,6 +222,17 @@ popo::base::Result<void> BufferPoolManager::flush_all()
                 return written;
             }
             frame.is_dirty = false;
+            if (own_txn && ++staged == kBatchPages)
+            {
+                auto committed = disk_manager_->commit_txn();
+                if (!committed)
+                {
+                    dirty_.insert(dirty_.end(), todo.begin() + static_cast<std::ptrdiff_t>(n + 1), todo.end());
+                    return committed;
+                }
+                staged = 0;
+                disk_manager_->begin_txn();
+            }
         }
     }
     if (own_txn)

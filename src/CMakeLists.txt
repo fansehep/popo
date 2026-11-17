@@ -120,6 +120,7 @@ target_include_directories(bytecode_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 add_library(executor_lib
     executor/executor.cc
+    executor/spill.cc
 )
 target_link_libraries(executor_lib PUBLIC base_lib type_lib catalog_lib parser_lib planner_lib bytecode_lib storage_lib)
 target_include_directories(executor_lib PUBLIC ${CMAKE_SOURCE_DIR}/src)

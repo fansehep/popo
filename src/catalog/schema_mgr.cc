@@ -69,6 +69,16 @@ popo::base::Result<SchemaId> SchemaManager::create_table(const std::string & tab
     return schema->id_;
 }
 
+void SchemaManager::restore(const std::unordered_map<std::string, Schema> & tables)
+{
+    std::lock_guard<std::mutex> lgd(mtx_);
+    for (const auto & [name, schema] : tables)
+    {
+        schema_map_[name] = std::make_shared<Schema>(schema);
+        next_schema_id_ = std::max(next_schema_id_, schema.id_ + 1);
+    }
+}
+
 popo::base::Result<void> SchemaManager::delete_table(const std::string & table_name)
 {
     std::lock_guard<std::mutex> lgd(this->mtx_);

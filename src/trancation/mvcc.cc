@@ -14,6 +14,215 @@ using popo::type::Row;
 using popo::type::Value;
 using popo::type::ValueType;
 
+struct MvccManager::Cursor::Impl
+{
+    using OverlayRows = std::map<Value, std::optional<Row>>;
+
+    Impl(
+        MvccManager * owner, Transaction * transaction, std::string table_name, std::optional<Value> lower,
+        std::optional<Value> upper)
+        : manager(owner), txn(transaction), table(std::move(table_name)), low(std::move(lower)), high(std::move(upper)),
+          snapshot(manager->snapshot_csn_for(txn))
+    {
+        version_lock = std::shared_lock<std::shared_mutex>(manager->version_mutex_);
+        if (auto found = manager->versions_.find(table); found != manager->versions_.end())
+        {
+            history = &found->second;
+            history_it = low ? history->lower_bound(*low) : history->begin();
+        }
+
+        if (auto found = txn->overlay().find(table); found != txn->overlay().end())
+        {
+            own = &found->second.rows;
+            own_it = low ? own->lower_bound(*low) : own->begin();
+        }
+
+        heap = manager->engine_->get_table_heap(table);
+        if (heap != nullptr)
+        {
+            heap_it = std::make_unique<popo::storage::TableIterator>(heap->iter());
+            if (low)
+            {
+                heap_it->seek_ge(*low);
+            }
+            load_heap();
+        }
+    }
+
+    bool next(Row & out)
+    {
+        ValueLess less;
+        while (true)
+        {
+            std::unique_lock<std::mutex> dirty_lock;
+            if (txn->isolation() == IsolationLevel::ReadUncommitted)
+            {
+                dirty_lock = std::unique_lock<std::mutex>(manager->txn_mutex_);
+            }
+            std::optional<Value> key;
+            auto consider = [&](const Value & candidate)
+            {
+                if (!key || less(candidate, *key))
+                {
+                    key = candidate;
+                }
+            };
+
+            if (heap_row)
+            {
+                consider(heap_pk);
+            }
+            if (history != nullptr && history_it != history->end())
+            {
+                consider(history_it->first);
+            }
+            if (own != nullptr && own_it != own->end())
+            {
+                consider(own_it->first);
+            }
+            if (dirty_lock.owns_lock())
+            {
+                for (const auto & [id, other] : manager->active_)
+                {
+                    if (other.get() == txn)
+                    {
+                        continue;
+                    }
+                    auto found = other->overlay().find(table);
+                    if (found == other->overlay().end())
+                    {
+                        continue;
+                    }
+                    auto it = after ? found->second.rows.upper_bound(*after)
+                                    : (low ? found->second.rows.lower_bound(*low) : found->second.rows.begin());
+                    if (it != found->second.rows.end())
+                    {
+                        consider(it->first);
+                    }
+                }
+            }
+            if (!key || (high && less(*high, *key)))
+            {
+                return false;
+            }
+
+            std::optional<Row> visible_row;
+            bool resolved = false;
+
+            // Current heap image is the baseline. Incremental history overrides
+            // it for touched keys, including tombstones and "not yet inserted".
+            if (heap_row && equal(heap_pk, *key))
+            {
+                visible_row = *heap_row;
+                resolved = true;
+            }
+            if (history != nullptr && history_it != history->end() && equal(history_it->first, *key))
+            {
+                visible_row.reset();
+                resolved = true;
+                for (const auto & version : history_it->second)
+                {
+                    if (manager->visible(version, snapshot))
+                    {
+                        visible_row = version.row;
+                        break;
+                    }
+                }
+            }
+            // Dirty overlays are above committed state; own writes win last.
+            if (dirty_lock.owns_lock())
+            {
+                for (const auto & [id, other] : manager->active_)
+                {
+                    if (other.get() == txn)
+                    {
+                        continue;
+                    }
+                    auto found = other->overlay().find(table);
+                    if (found != other->overlay().end())
+                    {
+                        auto row = found->second.rows.find(*key);
+                        if (row != found->second.rows.end())
+                        {
+                            visible_row = row->second;
+                            resolved = true;
+                        }
+                    }
+                }
+            }
+            if (own != nullptr && own_it != own->end() && equal(own_it->first, *key))
+            {
+                visible_row = own_it->second;
+                resolved = true;
+            }
+
+            advance_key(*key);
+            after = *key;
+            if (resolved && visible_row)
+            {
+                out = std::move(*visible_row);
+                return true;
+            }
+        }
+    }
+
+    bool equal(const Value & a, const Value & b) const
+    {
+        ValueLess less;
+        return !less(a, b) && !less(b, a);
+    }
+
+    void load_heap()
+    {
+        heap_row.reset();
+        if (heap_it && heap_it->valid())
+        {
+            heap_row = heap_it->current_row();
+            heap_pk = heap->schema().extract_pk(*heap_row);
+        }
+    }
+
+    void advance_key(const Value & key)
+    {
+        if (heap_row && equal(heap_pk, key))
+        {
+            heap_it->next();
+            load_heap();
+        }
+        if (history != nullptr && history_it != history->end() && equal(history_it->first, key))
+        {
+            ++history_it;
+        }
+        if (own != nullptr && own_it != own->end() && equal(own_it->first, key))
+        {
+            ++own_it;
+        }
+    }
+
+    MvccManager * manager;
+    Transaction * txn;
+    std::string table;
+    std::optional<Value> low;
+    std::optional<Value> high;
+    uint64_t snapshot;
+    popo::storage::TableHeap * heap = nullptr;
+    std::unique_ptr<popo::storage::TableIterator> heap_it;
+    std::optional<Row> heap_row;
+    Value heap_pk;
+    const VersionedTable * history = nullptr;
+    VersionedTable::const_iterator history_it;
+    const OverlayRows * own = nullptr;
+    OverlayRows::const_iterator own_it;
+    std::optional<Value> after;
+    std::shared_lock<std::shared_mutex> version_lock;
+};
+
+MvccManager::Cursor::Cursor(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) { }
+MvccManager::Cursor::Cursor(Cursor &&) noexcept = default;
+MvccManager::Cursor & MvccManager::Cursor::operator=(Cursor &&) noexcept = default;
+MvccManager::Cursor::~Cursor() = default;
+bool MvccManager::Cursor::next(Row & row) { return impl_ && impl_->next(row); }
+
 MvccManager::MvccManager(popo::storage::StorageEngine * engine, popo::storage::RedoLogManager * redo_log)
     : engine_(engine), redo_log_(redo_log)
 {
@@ -158,17 +367,9 @@ popo::base::Result<void> MvccManager::stage_update(Transaction * txn, const std:
         : raw_pk;
     POPO_TRY(check_unique(txn, table, row));
     std::vector<char> old_bytes;
+    if (auto old = visible_row(txn, table, pk, snapshot_csn_for(txn)))
     {
-        std::shared_lock<std::shared_mutex> lock(version_mutex_);
-        auto tit = versions_.find(table);
-        if (tit != versions_.end())
-        {
-            auto pit = tit->second.find(pk);
-            if (pit != tit->second.end() && !pit->second.empty())
-            {
-                old_bytes = popo::storage::RowSerializer::serialize(pit->second.back().row, heap->schema());
-            }
-        }
+        old_bytes = popo::storage::RowSerializer::serialize(*old, heap->schema());
     }
     auto new_bytes = popo::storage::RowSerializer::serialize(row, heap->schema());
     log_operation(txn, LogType::UPDATE, table, old_bytes, new_bytes);
@@ -184,17 +385,9 @@ popo::base::Result<void> MvccManager::stage_delete(Transaction * txn, const std:
         return popo::base::make_error(popo::base::Errno::TableNotFound, "MVCC: table not found: " + table);
     }
     std::vector<char> old_bytes;
+    if (auto old = visible_row(txn, table, pk, snapshot_csn_for(txn)))
     {
-        std::shared_lock<std::shared_mutex> lock(version_mutex_);
-        auto tit = versions_.find(table);
-        if (tit != versions_.end())
-        {
-            auto pit = tit->second.find(pk);
-            if (pit != tit->second.end() && !pit->second.empty())
-            {
-                old_bytes = popo::storage::RowSerializer::serialize(pit->second.back().row, heap->schema());
-            }
-        }
+        old_bytes = popo::storage::RowSerializer::serialize(*old, heap->schema());
     }
     log_operation(txn, LogType::DELETE, table, old_bytes, {});
     publish_overlay(txn, table, pk, std::nullopt);
@@ -342,103 +535,66 @@ std::optional<Row> MvccManager::visible_row(Transaction * txn, const std::string
 
     std::shared_lock<std::shared_mutex> lock(version_mutex_);
     auto tit = versions_.find(table);
-    if (tit == versions_.end())
+    if (tit != versions_.end())
     {
-        return std::nullopt;
-    }
-    auto pit = tit->second.find(pk);
-    if (pit == tit->second.end())
-    {
-        return std::nullopt;
-    }
-    for (const auto & v : pit->second)
-    {
-        if (visible(v, snapshot_csn))
+        auto pit = tit->second.find(pk);
+        if (pit != tit->second.end())
         {
-            return v.row;
+            for (const auto & v : pit->second)
+            {
+                if (visible(v, snapshot_csn))
+                {
+                    return v.row;
+                }
+            }
+            // The key has history but no version existed at this snapshot.
+            return std::nullopt;
         }
     }
-    return std::nullopt;
+
+    auto * heap = engine_->get_table_heap(table);
+    if (heap == nullptr)
+    {
+        return std::nullopt;
+    }
+    auto rid = heap->lookup_pk(pk);
+    if (!rid)
+    {
+        return std::nullopt;
+    }
+    auto tuple = heap->get_row(*rid);
+    return tuple ? std::optional<Row>(tuple->deform(heap->schema())) : std::nullopt;
+}
+
+MvccManager::Cursor MvccManager::scan_cursor(
+    Transaction * txn, const std::string & table, const std::optional<Value> & low, const std::optional<Value> & high)
+{
+    note_read(txn, table, low, high);
+    return Cursor(std::make_unique<Cursor::Impl>(this, txn, table, low, high));
 }
 
 std::vector<Row> MvccManager::scan(Transaction * txn, const std::string & table)
 {
-    note_read(txn, table, std::nullopt, std::nullopt);
-    auto snapshot_csn = snapshot_csn_for(txn);
-
-    std::map<Value, Row, ValueLess> merged;
-    {
-        std::shared_lock<std::shared_mutex> lock(version_mutex_);
-        auto tit = versions_.find(table);
-        if (tit != versions_.end())
-        {
-            for (const auto & [pk, chain] : tit->second)
-            {
-                for (const auto & v : chain)
-                {
-                    if (visible(v, snapshot_csn))
-                    {
-                        merged[pk] = v.row;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    // Other running overlays for dirty reads.
-    if (txn->isolation() == IsolationLevel::ReadUncommitted)
-    {
-        std::lock_guard<std::mutex> lock(txn_mutex_);
-        for (const auto & [id, other] : active_)
-        {
-            if (other.get() == txn)
-            {
-                continue;
-            }
-            auto ot = other->overlay().find(table);
-            if (ot == other->overlay().end())
-            {
-                continue;
-            }
-            for (const auto & [pk, opt] : ot->second.rows)
-            {
-                if (opt)
-                {
-                    merged[pk] = *opt;
-                }
-                else
-                {
-                    merged.erase(pk);
-                }
-            }
-        }
-    }
-
-    // Own overlay on top.
-    auto oit = txn->overlay().find(table);
-    if (oit != txn->overlay().end())
-    {
-        for (const auto & [pk, opt] : oit->second.rows)
-        {
-            if (opt)
-            {
-                merged[pk] = *opt;
-            }
-            else
-            {
-                merged.erase(pk);
-            }
-        }
-    }
-
+    auto cursor = scan_cursor(txn, table);
     std::vector<Row> rows;
-    rows.reserve(merged.size());
-    for (auto & [pk, row] : merged)
+    Row row;
+    while (cursor.next(row))
     {
         rows.push_back(std::move(row));
     }
     return rows;
+}
+
+int64_t MvccManager::count(Transaction * txn, const std::string & table)
+{
+    auto cursor = scan_cursor(txn, table);
+    int64_t result = 0;
+    Row row;
+    while (cursor.next(row))
+    {
+        ++result;
+    }
+    return result;
 }
 
 std::optional<Row> MvccManager::lookup(Transaction * txn, const std::string & table, const Value & pk)
@@ -449,26 +605,21 @@ std::optional<Row> MvccManager::lookup(Transaction * txn, const std::string & ta
 
 std::optional<Row> MvccManager::lookup_committed(const std::string & table, const Value & pk)
 {
-    auto snapshot_csn = current_csn();
+    // Serialize with install_overlay so a multi-row commit is observed wholly
+    // before or wholly after publication.
     std::shared_lock<std::shared_mutex> lock(version_mutex_);
-    auto tit = versions_.find(table);
-    if (tit == versions_.end())
+    auto * heap = engine_->get_table_heap(table);
+    if (heap == nullptr)
     {
         return std::nullopt;
     }
-    auto pit = tit->second.find(pk);
-    if (pit == tit->second.end())
+    auto rid = heap->lookup_pk(pk);
+    if (!rid)
     {
         return std::nullopt;
     }
-    for (const auto & v : pit->second)
-    {
-        if (visible(v, snapshot_csn))
-        {
-            return v.row;
-        }
-    }
-    return std::nullopt;
+    auto tuple = heap->get_row(*rid);
+    return tuple ? std::optional<Row>(tuple->deform(heap->schema())) : std::nullopt;
 }
 
 void MvccManager::note_read(Transaction * txn, const std::string & table, const std::optional<Value> & low, const std::optional<Value> & high)
@@ -612,13 +763,31 @@ void MvccManager::install_overlay(Transaction * txn, uint64_t csn)
         for (const auto & [pk, opt] : overlay.rows)
         {
             auto & chain = vtable[pk];
-            if (!chain.empty() && chain.back().end_csn == UINT64_MAX)
+            if (chain.empty())
+            {
+                // Capture the old baseline only when this key is first touched.
+                // Untouched committed rows stay exclusively in the B+Tree.
+                auto * heap = engine_->get_table_heap(table);
+                if (heap != nullptr)
+                {
+                    auto rid = heap->lookup_pk(pk);
+                    if (rid)
+                    {
+                        auto tuple = heap->get_row(*rid);
+                        if (tuple)
+                        {
+                            chain.push_back(Version{tuple->deform(heap->schema()), 0, csn});
+                        }
+                    }
+                }
+            }
+            else if (chain.back().end_csn == UINT64_MAX)
             {
                 chain.back().end_csn = csn;
             }
+            chain.push_back(Version{opt, csn, UINT64_MAX});
             if (opt)
             {
-                chain.push_back(Version{*opt, csn, UINT64_MAX});
                 install_row(table, *opt);
             }
             else
@@ -739,24 +908,10 @@ void MvccManager::abort_locked(Transaction * txn)
 
 void MvccManager::rebuild_from_heap(const std::string & table)
 {
-    auto * heap = engine_->get_table_heap(table);
-    if (heap == nullptr)
-    {
-        return;
-    }
-    VersionedTable vtable;
-    auto iter = heap->iter();
-    for (iter.rewind(); iter.valid(); iter.next())
-    {
-        auto row = iter.current_row();
-        auto pk = primary_key_of(table, row);
-        if (pk)
-        {
-            vtable[*pk].push_back(Version{std::move(row), 0, UINT64_MAX});
-        }
-    }
+    // Recovery has already rebuilt the current committed B+Tree image. History
+    // from before the crash has no surviving snapshots and need not be copied.
     std::unique_lock<std::shared_mutex> lock(version_mutex_);
-    versions_[table] = std::move(vtable);
+    versions_.erase(table);
 }
 
 void MvccManager::forget_table(const std::string & table)
@@ -767,19 +922,16 @@ void MvccManager::forget_table(const std::string & table)
 
 std::vector<Row> MvccManager::current_rows(const std::string & table)
 {
-    std::shared_lock<std::shared_mutex> lock(version_mutex_);
     std::vector<Row> rows;
-    auto tit = versions_.find(table);
-    if (tit == versions_.end())
+    auto * heap = engine_->get_table_heap(table);
+    if (heap == nullptr)
     {
         return rows;
     }
-    for (const auto & [pk, chain] : tit->second)
+    auto iter = heap->iter();
+    for (; iter.valid(); iter.next())
     {
-        if (!chain.empty() && chain.back().end_csn == UINT64_MAX)
-        {
-            rows.push_back(chain.back().row);
-        }
+        rows.push_back(iter.current_row());
     }
     return rows;
 }
@@ -814,18 +966,53 @@ void MvccManager::garbage_collect()
     }
 
     std::unique_lock<std::shared_mutex> lock(version_mutex_);
-    for (auto & [table, vtable] : versions_)
+    for (auto table_it = versions_.begin(); table_it != versions_.end();)
     {
-        for (auto & [pk, chain] : vtable)
+        auto & vtable = table_it->second;
+        for (auto key_it = vtable.begin(); key_it != vtable.end();)
         {
+            auto & chain = key_it->second;
             // Keep the current version plus anything a pinned snapshot may see.
             chain.erase(
                 std::remove_if(
                     chain.begin(), chain.end(),
                     [&](const Version & v) { return v.end_csn != UINT64_MAX && v.end_csn < pin; }),
                 chain.end());
+
+            // Once every snapshot is newer than the latest change, the B+Tree
+            // (or its absence for a tombstone) is sufficient for this key.
+            if (chain.empty() || (chain.size() == 1 && chain.back().begin_csn < pin))
+            {
+                key_it = vtable.erase(key_it);
+            }
+            else
+            {
+                ++key_it;
+            }
+        }
+        if (vtable.empty())
+        {
+            table_it = versions_.erase(table_it);
+        }
+        else
+        {
+            ++table_it;
         }
     }
+}
+
+size_t MvccManager::retained_version_count() const
+{
+    std::shared_lock<std::shared_mutex> lock(version_mutex_);
+    size_t count = 0;
+    for (const auto & [table, vtable] : versions_)
+    {
+        for (const auto & [pk, chain] : vtable)
+        {
+            count += chain.size();
+        }
+    }
+    return count;
 }
 
 } // namespace popo::txn

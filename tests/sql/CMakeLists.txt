@@ -1,8 +1,8 @@
 enable_testing()
 include(GoogleTest)
 
-add_executable(sql_test sql_test.cc sql_syntax_test.cc sql2006_test.cc tpch_test.cc)
-target_link_libraries(sql_test PRIVATE bytecode_lib executor_lib storage_lib type_lib catalog_lib base_lib parser_lib planner_lib gtest gtest_main spdlog)
+add_executable(sql_test sql_test.cc sql_syntax_test.cc sql2006_test.cc tpch_test.cc executor_spill_test.cc)
+target_link_libraries(sql_test PRIVATE tpch_workload bytecode_lib executor_lib storage_lib type_lib catalog_lib base_lib parser_lib planner_lib gtest gtest_main spdlog)
 target_include_directories(sql_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 gtest_discover_tests(sql_test)
 

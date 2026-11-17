@@ -481,9 +481,16 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                     break;
                 }
                 auto & cursor = it->second;
-                cursor.rows = engine_.mvcc()->scan(txn_, cursor.table_name);
+                cursor.rows.clear();
+                cursor.stream = std::make_unique<popo::txn::MvccManager::Cursor>(
+                    engine_.mvcc()->scan_cursor(txn_, cursor.table_name));
                 cursor.pos = 0;
-                cursor.has_current = !cursor.rows.empty();
+                popo::type::Row row;
+                cursor.has_current = cursor.stream->next(row);
+                if (cursor.has_current)
+                {
+                    cursor.rows.push_back(std::move(row));
+                }
                 pc_ = cursor.has_current ? pc_ + 1 : inst.operand2;
                 break;
             }
@@ -496,8 +503,20 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                     break;
                 }
                 auto & cursor = it->second;
-                cursor.pos++;
-                cursor.has_current = cursor.pos < cursor.rows.size();
+                if (cursor.stream)
+                {
+                    popo::type::Row row;
+                    cursor.has_current = cursor.stream->next(row);
+                    if (cursor.has_current)
+                    {
+                        cursor.rows[0] = std::move(row);
+                    }
+                }
+                else
+                {
+                    cursor.pos++;
+                    cursor.has_current = cursor.pos < cursor.rows.size();
+                }
                 pc_ = cursor.has_current ? inst.operand2 : pc_ + 1;
                 break;
             }
@@ -657,17 +676,16 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                     break;
                 }
                 auto & cursor = it->second;
-                cursor.rows = engine_.mvcc()->scan(txn_, cursor.table_name);
+                cursor.rows.clear();
+                cursor.stream = std::make_unique<popo::txn::MvccManager::Cursor>(
+                    engine_.mvcc()->scan_cursor(txn_, cursor.table_name, key));
                 cursor.pos = 0;
-                if (cursor.pk_col >= 0)
+                popo::type::Row row;
+                cursor.has_current = cursor.stream->next(row);
+                if (cursor.has_current)
                 {
-                    size_t pk = static_cast<size_t>(cursor.pk_col);
-                    while (cursor.pos < cursor.rows.size() && do_lt(cursor.rows[cursor.pos].values_[pk], key))
-                    {
-                        cursor.pos++;
-                    }
+                    cursor.rows.push_back(std::move(row));
                 }
-                cursor.has_current = cursor.pos < cursor.rows.size();
                 pc_ = cursor.has_current ? pc_ + 1 : inst.operand2;
                 break;
             }
@@ -682,6 +700,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                 }
                 auto & cursor = it->second;
                 auto * mvcc = engine_.mvcc();
+                cursor.stream.reset();
                 size_t ordinal = static_cast<size_t>(inst.operand3);
                 int32_t col = -1;
                 if (auto qr = schema_mgr_.query_table(cursor.table_name); qr && *qr && ordinal < (*qr)->indexes_.size())
@@ -789,6 +808,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                     return error(popo::base::Error(static_cast<int32_t>(popo::base::InternalErr), "SeekByPk: invalid cursor"));
                 }
                 auto & cursor = it->second;
+                cursor.stream.reset();
                 auto row = engine_.mvcc()->lookup(txn_, cursor.table_name, pk_val);
                 cursor.rows.clear();
                 cursor.pos = 0;
@@ -809,7 +829,7 @@ popo::base::Result<ExecuteSuccess> VirtualMachine::run(const Program & program)
                 int64_t n = 0;
                 if (it != cursors_.end() && it->second.heap)
                 {
-                    n = static_cast<int64_t>(engine_.mvcc()->scan(txn_, it->second.table_name).size());
+                    n = engine_.mvcc()->count(txn_, it->second.table_name);
                 }
                 push(popo::type::Value(popo::type::ValueType::Int64, n));
                 pc_++;

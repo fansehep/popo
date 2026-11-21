@@ -1,18 +1,32 @@
 #pragma once
 
-#include <limits>
-#include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
+
 #include "base/error.h"
-#include "executor/spill.h"
 #include "bytecode/vm.h"
 #include "catalog/schema_mgr.h"
+#include "executor/spill/memory_tracker.h"
+#include "executor/spill/temp_file_manager.h"
+#include "executor/types/batch.h"
+#include "executor/types/cached_subquery.h"
+#include "executor/types/column_schema.h"
+#include "executor/types/correlated_subquery_cache.h"
+#include "executor/types/decorrelated_exists.h"
+#include "executor/types/decorrelated_scalar_agg.h"
+#include "executor/types/eval_env.h"
+#include "executor/types/executor_options.h"
+#include "executor/types/executor_spill_stats.h"
+#include "executor/types/stream_item.h"
+#include "executor/types/stream_materialized.h"
+#include "executor/vector/columnar_batch.h"
+#include "function/fast_like.h"
 #include "parser/ast.h"
 #include "planner/planner.h"
 #include "storage/storage_engine.h"
@@ -30,23 +44,13 @@ bool needs_generic_executor(const popo::parser::StmtPtr & stmt);
 // True when planning expanded a view, CTE, or other node the bytecode VM does not run.
 bool plan_needs_generic_executor(const popo::planner::PlanNodePtr & plan);
 
-// Row-at-a-time / batch plan interpreter with predicate pushdown, hash equijoin,
-// and uncorrelated subquery caching. Handles the full SQL surface (including TPC-H).
+// Vectorized columnar & batch plan executor with SIMD filtering/aggregation,
+// DP join ordering, subquery decorrelation, and budget-bounded spilling.
 class Executor
 {
 public:
-    struct Options
-    {
-        size_t memory_limit_bytes = 4ULL * 1024 * 1024 * 1024;
-        std::filesystem::path temp_directory;
-    };
-
-    struct SpillStats
-    {
-        size_t peak_memory_bytes = 0;
-        size_t files_created = 0;
-        uint64_t bytes_written = 0;
-    };
+    using Options = ExecutorOptions;
+    using SpillStats = ExecutorSpillStats;
 
     Executor(popo::catalog::SchemaManager & schema_mgr, popo::storage::StorageEngine & engine);
     Executor(
@@ -59,55 +63,6 @@ public:
     execute(const popo::planner::PlanNodePtr & plan, popo::txn::Transaction * outer_txn = nullptr);
 
 private:
-    struct ColumnSchema
-    {
-        std::string table;
-        std::string alias;
-        std::vector<std::string> columns;
-    };
-
-    struct Batch
-    {
-        std::vector<ColumnSchema> schemas;
-        std::vector<popo::type::Row> rows;
-        std::optional<std::filesystem::path> spilled_rows;
-        // Per-row aggregate results (aligned with rows) when produced by an Agg node,
-        // so HAVING / Project / Sort above can reference aggregate expressions.
-        std::vector<std::unordered_map<const popo::parser::Expr *, popo::type::Value>> row_aggs;
-
-        size_t width() const;
-        std::vector<std::string> flat_names() const;
-    };
-
-    struct CachedSubquery
-    {
-        Batch batch;
-        std::unordered_set<std::string> first_col_keys;
-        bool has_null = false;
-        bool indexed = false;
-    };
-
-    struct CorrelatedSubqueryCache
-    {
-        std::vector<std::pair<std::string, std::string>> outer_columns;
-        std::unordered_map<std::string, CachedSubquery> entries;
-    };
-
-    struct EvalEnv
-    {
-        const Batch * layout = nullptr;
-        const popo::type::Row * row = nullptr;
-        const EvalEnv * outer = nullptr;
-        const std::unordered_map<const popo::parser::Expr *, popo::type::Value> * aggs = nullptr;
-        int depth = 0;
-    };
-
-    struct StreamItem
-    {
-        popo::type::Row row;
-        std::unordered_map<const popo::parser::Expr *, popo::type::Value> aggs;
-    };
-
     using StreamConsumer =
         std::function<popo::base::Result<bool>(StreamItem &&, const Batch &)>;
 
@@ -120,12 +75,10 @@ private:
     std::unordered_map<const popo::parser::Expr *, popo::planner::PlanNodePtr> subquery_plans_;
     std::unordered_map<const popo::parser::Expr *, CachedSubquery> uncorrelated_subqueries_;
     std::unordered_map<const popo::parser::Expr *, CorrelatedSubqueryCache> correlated_subqueries_;
+    std::unordered_map<const popo::parser::Expr *, DecorrelatedExists> decorrelated_exists_;
+    std::unordered_map<const popo::parser::Expr *, DecorrelatedScalarAgg> decorrelated_scalar_aggs_;
+    std::unordered_map<const popo::parser::Expr *, popo::function::FastLike> compiled_likes_;
     std::unordered_map<const popo::planner::PlanNode *, Batch> materialized_;
-    struct StreamMaterialized
-    {
-        Batch layout;
-        std::filesystem::path path;
-    };
     std::unordered_map<const popo::planner::PlanNode *, StreamMaterialized> stream_materialized_;
     std::unordered_map<std::string, Batch> recursive_inputs_;
     mutable int min_env_depth_seen_ = std::numeric_limits<int>::max();
@@ -135,17 +88,35 @@ private:
     SpillStats spill_stats_;
     std::unique_ptr<MemoryTracker> memory_;
     std::unique_ptr<TempFileManager> temp_;
+    bool allow_decorrelation_ = false;
 
     popo::planner::PlanNodePtr optimize_plan(const popo::planner::PlanNodePtr & node, bool preserve_star_order = false) const;
     popo::planner::PlanNodePtr optimize_join_group(const popo::planner::PlanNodePtr & node, bool preserve_star_order) const;
+    popo::planner::PlanNodePtr push_projections(const popo::planner::PlanNodePtr & node) const;
+    size_t estimate_plan_rows(const popo::planner::PlanNodePtr & node) const;
     static bool collect_schemas(const popo::planner::PlanNodePtr & node, std::vector<ColumnSchema> & out);
 
     popo::base::Result<Batch> exec_batch(const popo::planner::PlanNodePtr & node, const EvalEnv * outer);
-    // Pull-compatible producer: the bool returned by the consumer controls
-    // early termination (used by LIMIT and EXISTS).
     popo::base::Result<Batch> stream_rows(
         const popo::planner::PlanNodePtr & node, const EvalEnv * outer,
         const StreamConsumer & consumer);
+    popo::base::Result<Batch> stream_scan_filter_vectorized(
+        const popo::planner::ScanNode & scan,
+        const popo::parser::ExprPtr & filter_cond,
+        const EvalEnv * outer,
+        const std::function<popo::base::Result<bool>(ColumnarBatch &, const Batch &)> & batch_consumer);
+    popo::base::Result<std::optional<Batch>> try_exec_vectorized_agg(
+        const popo::planner::AggNode & node, const EvalEnv * outer,
+        const popo::parser::ExprPtr & having_cond = nullptr);
+    popo::base::Result<Batch> stream_join(
+        const popo::planner::JoinNode & node, const EvalEnv * outer,
+        const StreamConsumer & consumer);
+    popo::base::Result<Batch> exec_topn_sort(
+        const popo::planner::SortNode & sort, int64_t limit_count, int64_t offset_count, const EvalEnv * outer);
+    popo::base::Result<std::optional<popo::type::Value>> try_eval_decorrelated_exists(
+        const popo::parser::ExistsExpr & ex, const EvalEnv & env);
+    popo::base::Result<std::optional<popo::type::Value>> try_eval_decorrelated_scalar_agg(
+        const popo::parser::SubqueryExpr & sub, const EvalEnv & env);
     popo::base::Result<Batch> exec_scan(const popo::planner::ScanNode & node);
     popo::base::Result<Batch> exec_subquery_scan(const popo::planner::SubqueryScanNode & node, const EvalEnv * outer);
     popo::base::Result<Batch> exec_filter(const popo::planner::FilterNode & node, const EvalEnv * outer);

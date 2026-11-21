@@ -1359,12 +1359,80 @@ std::pair<const char *, uint32_t> TableIterator::current_bytes() const
 
 popo::type::Row TableIterator::current_row() const
 {
+    if (auto [ptr, len] = current_bytes(); ptr != nullptr)
+    {
+        return RowSerializer::deserialize(ptr, len, schema_);
+    }
     return current_tuple().deform(schema_);
+}
+
+popo::type::Row TableIterator::current_projected_row(std::span<const uint16_t> columns) const
+{
+    if (auto [ptr, len] = current_bytes(); ptr != nullptr)
+    {
+        return RowSerializer::deserialize_projected(ptr, len, schema_, columns);
+    }
+    auto tuple = current_tuple();
+    if (tuple.empty())
+    {
+        return {};
+    }
+    return RowSerializer::deserialize_projected(tuple.data(), tuple.size(), schema_, columns);
 }
 
 RowId TableIterator::current_row_id() const
 {
     return RowId{current_page_id_, current_slot_id_};
+}
+
+size_t TableIterator::next_batch_raw(size_t max_rows, const std::function<void(const char *, uint32_t)> & emit)
+{
+    size_t produced = 0;
+    while (valid_ && produced < max_rows)
+    {
+        if (!page_guard_.is_valid() || page_guard_.page_id() != current_page_id_)
+        {
+            page_guard_ = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
+            if (!page_guard_.is_valid())
+            {
+                valid_ = false;
+                break;
+            }
+        }
+        const auto * page = reinterpret_cast<const DataPage *>(page_guard_.data());
+        const uint16_t slot_cnt = page->slot_count();
+        while (current_slot_id_ < slot_cnt && produced < max_rows)
+        {
+            auto [data_ptr, len] = page->get_tuple(current_slot_id_);
+            ++current_slot_id_;
+            if (data_ptr != nullptr)
+            {
+                emit(data_ptr, len);
+                ++produced;
+            }
+        }
+        if (current_slot_id_ >= slot_cnt)
+        {
+            current_page_id_ = page->next_leaf_page();
+            current_slot_id_ = 0;
+            if (current_page_id_ == INVALID_PAGE_ID)
+            {
+                valid_ = false;
+                break;
+            }
+            page_guard_ = heap_->buffer_pool()->fetch_page(heap_->table_name(), current_page_id_);
+            if (!page_guard_.is_valid())
+            {
+                valid_ = false;
+                break;
+            }
+        }
+    }
+    if (valid_)
+    {
+        advance_to_valid();
+    }
+    return produced;
 }
 
 void TableIterator::advance_to_valid()

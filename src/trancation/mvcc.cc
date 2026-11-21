@@ -20,22 +20,25 @@ struct MvccManager::Cursor::Impl
 
     Impl(
         MvccManager * owner, Transaction * transaction, std::string table_name, std::optional<Value> lower,
-        std::optional<Value> upper)
+        std::optional<Value> upper, std::vector<uint16_t> proj = {}, bool use_proj = false)
         : manager(owner), txn(transaction), table(std::move(table_name)), low(std::move(lower)), high(std::move(upper)),
-          snapshot(manager->snapshot_csn_for(txn))
+          snapshot(manager->snapshot_csn_for(txn)), projected_cols(std::move(proj)), has_projection(use_proj)
     {
         version_lock = std::shared_lock<std::shared_mutex>(manager->version_mutex_);
-        if (auto found = manager->versions_.find(table); found != manager->versions_.end())
+        if (auto found = manager->versions_.find(table); found != manager->versions_.end() && !found->second.empty())
         {
             history = &found->second;
             history_it = low ? history->lower_bound(*low) : history->begin();
         }
 
-        if (auto found = txn->overlay().find(table); found != txn->overlay().end())
+        if (auto found = txn->overlay().find(table); found != txn->overlay().end() && !found->second.rows.empty())
         {
             own = &found->second.rows;
             own_it = low ? own->lower_bound(*low) : own->begin();
         }
+
+        clean_baseline = (history == nullptr) && (own == nullptr)
+            && (txn->isolation() != IsolationLevel::ReadUncommitted) && !low && !high;
 
         heap = manager->engine_->get_table_heap(table);
         if (heap != nullptr)
@@ -45,12 +48,26 @@ struct MvccManager::Cursor::Impl
             {
                 heap_it->seek_ge(*low);
             }
-            load_heap();
+            if (!clean_baseline)
+            {
+                load_heap();
+            }
         }
     }
 
     bool next(Row & out)
     {
+        if (clean_baseline)
+        {
+            if (!heap_it || !heap_it->valid())
+            {
+                return false;
+            }
+            out = has_projection ? heap_it->current_projected_row(projected_cols) : heap_it->current_row();
+            heap_it->next();
+            return true;
+        }
+
         ValueLess less;
         while (true)
         {
@@ -160,7 +177,23 @@ struct MvccManager::Cursor::Impl
             after = *key;
             if (resolved && visible_row)
             {
-                out = std::move(*visible_row);
+                if (has_projection)
+                {
+                    Row proj_row;
+                    proj_row.reserve_values(projected_cols.size());
+                    for (uint16_t col_idx : projected_cols)
+                    {
+                        if (col_idx < visible_row->values_.size())
+                            proj_row.append_value(std::move(visible_row->values_[col_idx]));
+                        else
+                            proj_row.append_value(Value());
+                    }
+                    out = std::move(proj_row);
+                }
+                else
+                {
+                    out = std::move(*visible_row);
+                }
                 return true;
             }
         }
@@ -214,6 +247,9 @@ struct MvccManager::Cursor::Impl
     const OverlayRows * own = nullptr;
     OverlayRows::const_iterator own_it;
     std::optional<Value> after;
+    std::vector<uint16_t> projected_cols;
+    bool has_projection = false;
+    bool clean_baseline = false;
     std::shared_lock<std::shared_mutex> version_lock;
 };
 
@@ -222,6 +258,14 @@ MvccManager::Cursor::Cursor(Cursor &&) noexcept = default;
 MvccManager::Cursor & MvccManager::Cursor::operator=(Cursor &&) noexcept = default;
 MvccManager::Cursor::~Cursor() = default;
 bool MvccManager::Cursor::next(Row & row) { return impl_ && impl_->next(row); }
+bool MvccManager::Cursor::is_clean_baseline() const { return impl_ && impl_->clean_baseline; }
+size_t MvccManager::Cursor::next_batch_raw(
+    size_t max_rows, const std::function<void(const char *, uint32_t)> & emit)
+{
+    if (!impl_ || !impl_->clean_baseline || !impl_->heap_it || !impl_->heap_it->valid())
+        return 0;
+    return impl_->heap_it->next_batch_raw(max_rows, emit);
+}
 
 MvccManager::MvccManager(popo::storage::StorageEngine * engine, popo::storage::RedoLogManager * redo_log)
     : engine_(engine), redo_log_(redo_log)
@@ -571,6 +615,14 @@ MvccManager::Cursor MvccManager::scan_cursor(
 {
     note_read(txn, table, low, high);
     return Cursor(std::make_unique<Cursor::Impl>(this, txn, table, low, high));
+}
+
+MvccManager::Cursor MvccManager::scan_cursor_projected(
+    Transaction * txn, const std::string & table, std::vector<uint16_t> projected_columns)
+{
+    note_read(txn, table, std::nullopt, std::nullopt);
+    return Cursor(
+        std::make_unique<Cursor::Impl>(this, txn, table, std::nullopt, std::nullopt, std::move(projected_columns), true));
 }
 
 std::vector<Row> MvccManager::scan(Transaction * txn, const std::string & table)

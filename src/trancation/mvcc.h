@@ -45,6 +45,12 @@ public:
         // Produces the next visible row in primary-key order.
         bool next(popo::type::Row & row);
 
+        // True when scan reads committed B+Tree heap directly without MVCC overlays.
+        bool is_clean_baseline() const;
+
+        // Fast batch fetch of raw serialized tuples when is_clean_baseline() is true.
+        size_t next_batch_raw(size_t max_rows, const std::function<void(const char *, uint32_t)> & emit);
+
     private:
         struct Impl;
         explicit Cursor(std::unique_ptr<Impl> impl);
@@ -80,6 +86,8 @@ public:
     Cursor scan_cursor(
         Transaction * txn, const std::string & table, const std::optional<popo::type::Value> & low = std::nullopt,
         const std::optional<popo::type::Value> & high = std::nullopt);
+    Cursor scan_cursor_projected(
+        Transaction * txn, const std::string & table, std::vector<uint16_t> projected_columns);
     std::vector<popo::type::Row> scan(Transaction * txn, const std::string & table);
     int64_t count(Transaction * txn, const std::string & table);
     std::optional<popo::type::Row> lookup(Transaction * txn, const std::string & table, const popo::type::Value & pk);

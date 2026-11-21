@@ -1,8 +1,10 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 #include "src/catalog/schema.h"
@@ -49,6 +51,12 @@ public:
 
     // Deformed view of current_tuple(), for the executor.
     popo::type::Row current_row() const;
+
+    // Decode only the selected physical columns directly from the pinned page.
+    popo::type::Row current_projected_row(std::span<const uint16_t> columns) const;
+
+    // Emit up to max_rows raw serialized tuples directly from pinned leaf pages.
+    size_t next_batch_raw(size_t max_rows, const std::function<void(const char *, uint32_t)> & emit);
 
     // Get current RowId
     RowId current_row_id() const;

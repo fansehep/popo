@@ -52,13 +52,15 @@ struct PlanNode
     virtual ~PlanNode() = default;
 };
 
-// Table scan: read all rows from a table
+// Table scan: read rows from a table (optionally projected to needed physical columns)
 struct ScanNode : PlanNode
 {
     std::string table_name;
     std::string alias; // optional alias for the table
     std::vector<std::string> column_names; // resolved column names
     std::vector<popo::type::ValueType> column_types; // resolved column types
+    std::vector<uint16_t> projected_columns; // physical schema column indices when has_projection is true
+    bool has_projection = false;
     ScanNode() { type = PlanNodeType::Scan; }
 };
 

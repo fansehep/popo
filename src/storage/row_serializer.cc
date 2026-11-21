@@ -348,6 +348,179 @@ Row RowSerializer::deserialize(const char * data, uint32_t len, const Schema & s
     return row;
 }
 
+Row RowSerializer::deserialize_projected(
+    const char * data, uint32_t len, const Schema & schema, std::span<const uint16_t> columns)
+{
+    Row row;
+    if (columns.empty() || data == nullptr || len < sizeof(uint16_t))
+    {
+        return row;
+    }
+
+    uint32_t pos = 0;
+    uint16_t num_cols = 0;
+    std::memcpy(&num_cols, data + pos, sizeof(uint16_t));
+    pos += sizeof(uint16_t);
+
+    uint32_t null_bitmap_bytes = (num_cols + 7) / 8;
+    if (pos + null_bitmap_bytes > len)
+    {
+        return row;
+    }
+
+    const char * bitmap = data + pos;
+    pos += null_bitmap_bytes;
+
+    row.reserve_values(columns.size());
+    const uint16_t limit = static_cast<uint16_t>(std::min<size_t>(num_cols, schema.columns_.size()));
+    size_t pick = 0;
+
+    for (uint16_t i = 0; i < limit && pick < columns.size(); ++i)
+    {
+        const bool wanted = (columns[pick] == i);
+        const bool is_null = ((bitmap[i / 8] >> (i % 8)) & 1) != 0;
+        if (is_null)
+        {
+            if (wanted)
+            {
+                row.append_value(Value());
+                ++pick;
+            }
+            continue;
+        }
+
+        const ValueType type = schema.columns_[i].data_type_;
+        if (!wanted)
+        {
+            if (type == ValueType::String)
+            {
+                if (pos + sizeof(uint16_t) > len)
+                {
+                    break;
+                }
+                uint16_t str_len = 0;
+                std::memcpy(&str_len, data + pos, sizeof(uint16_t));
+                pos += sizeof(uint16_t) + str_len;
+            }
+            else
+            {
+                pos += fixed_type_size(type);
+            }
+            if (pos > len)
+            {
+                break;
+            }
+            continue;
+        }
+
+        switch (type)
+        {
+            case ValueType::Bool: {
+                uint8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                pos += 1;
+                row.append_value(Value(ValueType::Bool, static_cast<bool>(v)));
+                break;
+            }
+            case ValueType::Int8: {
+                int8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                pos += 1;
+                row.append_value(Value(ValueType::Int8, v));
+                break;
+            }
+            case ValueType::Uint8: {
+                uint8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                pos += 1;
+                row.append_value(Value(ValueType::Uint8, v));
+                break;
+            }
+            case ValueType::Char: {
+                uint8_t v = 0;
+                std::memcpy(&v, data + pos, 1);
+                pos += 1;
+                row.append_value(Value(ValueType::Char, static_cast<char>(v)));
+                break;
+            }
+            case ValueType::Int16: {
+                int16_t v = 0;
+                std::memcpy(&v, data + pos, 2);
+                pos += 2;
+                row.append_value(Value(ValueType::Int16, v));
+                break;
+            }
+            case ValueType::Uint16: {
+                uint16_t v = 0;
+                std::memcpy(&v, data + pos, 2);
+                pos += 2;
+                row.append_value(Value(ValueType::Uint16, v));
+                break;
+            }
+            case ValueType::Int32: {
+                int32_t v = 0;
+                std::memcpy(&v, data + pos, 4);
+                pos += 4;
+                row.append_value(Value(ValueType::Int32, v));
+                break;
+            }
+            case ValueType::Uint32: {
+                uint32_t v = 0;
+                std::memcpy(&v, data + pos, 4);
+                pos += 4;
+                row.append_value(Value(ValueType::Uint32, v));
+                break;
+            }
+            case ValueType::Float32: {
+                float v = 0;
+                std::memcpy(&v, data + pos, 4);
+                pos += 4;
+                row.append_value(Value(ValueType::Float32, v));
+                break;
+            }
+            case ValueType::Int64: {
+                int64_t v = 0;
+                std::memcpy(&v, data + pos, 8);
+                pos += 8;
+                row.append_value(Value(ValueType::Int64, v));
+                break;
+            }
+            case ValueType::Uint64: {
+                uint64_t v = 0;
+                std::memcpy(&v, data + pos, 8);
+                pos += 8;
+                row.append_value(Value(ValueType::Uint64, v));
+                break;
+            }
+            case ValueType::Float64: {
+                double v = 0;
+                std::memcpy(&v, data + pos, 8);
+                pos += 8;
+                row.append_value(Value(ValueType::Float64, v));
+                break;
+            }
+            case ValueType::String: {
+                uint16_t str_len = 0;
+                std::memcpy(&str_len, data + pos, sizeof(uint16_t));
+                pos += sizeof(uint16_t);
+                row.append_value(Value(ValueType::String, std::string(data + pos, str_len)));
+                pos += str_len;
+                break;
+            }
+            default:
+                row.append_value(Value());
+                break;
+        }
+        ++pick;
+    }
+    while (pick < columns.size())
+    {
+        row.append_value(Value());
+        ++pick;
+    }
+    return row;
+}
+
 Value RowSerializer::read_column(const char * data, uint32_t len, const Schema & schema, int32_t column)
 {
     if (data == nullptr || column < 0 || static_cast<size_t>(column) >= schema.columns_.size() || len < sizeof(uint16_t))
